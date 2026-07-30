@@ -1,4 +1,3 @@
-import tempfile
 from pathlib import Path
 
 import click
@@ -18,20 +17,13 @@ from services.email_service import ReceiptEmailService
 from services.membership_service import ensure_default_plans
 from services.schema_service import upgrade_trainer_accounts
 
-from .config import Config, is_vercel_runtime
+from .config import Config, is_vercel_runtime, sqlalchemy_engine_options
 
 
 def create_app(test_config: dict | None = None) -> Flask:
     package_dir = Path(__file__).resolve().parent
     project_root = package_dir.parent
-    vercel = is_vercel_runtime()
-
-    # Vercel's deployment filesystem is read-only except the OS temp dir (/tmp).
-    instance_path = (
-        Path(tempfile.gettempdir()).resolve() / "fitness_studio_instance"
-        if vercel
-        else (project_root / "instance").resolve()
-    )
+    instance_path = (project_root / "instance").resolve()
     instance_path.mkdir(parents=True, exist_ok=True)
 
     app = Flask(
@@ -43,13 +35,10 @@ def create_app(test_config: dict | None = None) -> Flask:
         static_url_path="/static",
     )
     app.config.from_object(Config)
-    if vercel:
-        # Absolute SQLite URI keeps the writable DB under the temp directory.
-        app.config["SQLALCHEMY_DATABASE_URI"] = (
-            f"sqlite:///{instance_path.as_posix()}/fitness_studio.db"
-        )
     if test_config:
         app.config.update(test_config)
+        uri = app.config.get("SQLALCHEMY_DATABASE_URI", "")
+        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = sqlalchemy_engine_options(str(uri))
 
     db.init_app(app)
     app.register_blueprint(core_bp)
@@ -69,24 +58,25 @@ def create_app(test_config: dict | None = None) -> Flask:
         app.config["RESEND_API_KEY"], app.config["RECEIPT_FROM_EMAIL"]
     )
 
-    if vercel and test_config is None:
+    # On Vercel (or any empty cloud DB), create schema and demo rows once.
+    if is_vercel_runtime() and test_config is None:
         with app.app_context():
-            _bootstrap_vercel_database()
+            _bootstrap_database()
 
     return app
 
 
-def _bootstrap_vercel_database() -> None:
-    """Create schema and demo rows for ephemeral Vercel /tmp SQLite storage."""
+def _bootstrap_database() -> None:
+    """Ensure schema exists and seed demo data when the database is empty."""
 
     db.create_all()
     ensure_default_plans()
-    try:
-        # WAL needs shared memory; DELETE mode is safer on serverless /tmp.
-        db.session.execute(text("PRAGMA journal_mode=DELETE"))
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
+    if db.engine.dialect.name == "sqlite":
+        try:
+            db.session.execute(text("PRAGMA journal_mode=DELETE"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
 
     user_count = db.session.scalar(select(func.count(User.id))) or 0
     if user_count == 0:
@@ -99,22 +89,23 @@ def _bootstrap_vercel_database() -> None:
 @click.command("init-db")
 @click.option("--drop", is_flag=True, help="Drop existing tables before creation.")
 def init_db_command(drop: bool) -> None:
-    """Create the normalized schema in instance/fitness_studio.db."""
+    """Create the application schema in SQLite or PostgreSQL."""
 
-    if drop and click.confirm("Drop all existing local tables?"):
+    if drop and click.confirm("Drop all existing tables?"):
         db.drop_all()
     elif drop:
         raise click.Abort()
     db.create_all()
     ensure_default_plans()
-    db.session.execute(text("PRAGMA journal_mode=WAL"))
-    db.session.commit()
-    click.echo("Initialized local database: instance/fitness_studio.db")
+    if db.engine.dialect.name == "sqlite":
+        db.session.execute(text("PRAGMA journal_mode=WAL"))
+        db.session.commit()
+    click.echo(f"Initialized database ({db.engine.dialect.name}).")
 
 
 @click.command("upgrade-db")
 def upgrade_db_command() -> None:
-    """Add trainer user accounts to an existing SQLite database."""
+    """Ensure trainer user accounts exist for trainer profiles."""
 
     created = upgrade_trainer_accounts()
     click.echo(f"Database upgraded. Trainer logins created: {created}.")

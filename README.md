@@ -12,7 +12,7 @@ Academic final project for a web information-systems course. The application man
   - Business/integration services: [`services/`](services/)
 - Application factory: [`fitness_studio/__init__.py`](fitness_studio/__init__.py)
 
-SQLite remains the authoritative primary database. Groq, Resend, and Cloudinary are optional integrations and do not replace it.
+SQLite remains the default local database when `DATABASE_URL` is unset. For production and Vercel, set `DATABASE_URL` to your Supabase PostgreSQL connection string. Groq, Resend, and Cloudinary are optional integrations and do not replace the relational database.
 
 ## User Roles
 ### Manager

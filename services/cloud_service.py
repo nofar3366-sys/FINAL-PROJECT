@@ -112,6 +112,72 @@ class CloudService:
             path, snapshot, readable_snapshot, timestamp, digest
         )
 
+    def backup_sqlalchemy_database(self, engine) -> CloudOperationResult:
+        """Backup a live SQLAlchemy engine (PostgreSQL/Supabase or SQLite)."""
+
+        self.simulation_directory.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        readable_snapshot = self._create_readable_snapshot_from_engine(
+            engine, timestamp
+        )
+        digest = hashlib.sha256(readable_snapshot.read_bytes()).hexdigest()[:12]
+        placeholder = (
+            self.simulation_directory / f"fitness_studio_{timestamp}.sql.txt"
+        )
+        placeholder.write_text(
+            f"Logical backup generated at {timestamp} via SQLAlchemy "
+            f"dialect={engine.dialect.name}.\n",
+            encoding="utf-8",
+        )
+        source_label = Path(f"{engine.dialect.name}-database")
+        if not self.cloudinary_url:
+            return self._simulation_result(
+                source_label, placeholder, readable_snapshot, timestamp, digest
+            )
+        return self._upload_to_cloudinary(
+            source_label, placeholder, readable_snapshot, timestamp, digest
+        )
+
+    def _create_readable_snapshot_from_engine(
+        self, engine, timestamp: str
+    ) -> Path:
+        table_names = (
+            "users",
+            "members",
+            "membership_plans",
+            "membership_subscriptions",
+            "membership_purchases",
+            "membership_renewals",
+            "workout_sessions",
+            "bookings",
+            "trainers",
+        )
+        table_data = []
+        with engine.connect() as connection:
+            for table_name in table_names:
+                try:
+                    result = connection.exec_driver_sql(
+                        f'SELECT * FROM "{table_name}"'
+                    )
+                except Exception:
+                    continue
+                columns = list(result.keys())
+                rows = [
+                    self._sanitize_row(
+                        table_name, dict(zip(columns, row, strict=False))
+                    )
+                    for row in result.fetchall()
+                ]
+                table_data.append((table_name, rows))
+
+        report_path = (
+            self.simulation_directory / f"database_snapshot_{timestamp}.html"
+        )
+        report_path.write_text(
+            self._render_html_report(table_data, timestamp), encoding="utf-8"
+        )
+        return report_path
+
     def _create_snapshot(self, source_path: Path) -> tuple[Path, str, str]:
         self.simulation_directory.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")

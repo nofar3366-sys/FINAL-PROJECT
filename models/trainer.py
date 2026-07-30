@@ -4,9 +4,6 @@ from .user import utc_now
 
 class Trainer(db.Model):
     __tablename__ = "trainers"
-    __table_args__ = (
-        db.CheckConstraint("is_active IN (0, 1)", name="valid_trainer_active"),
-    )
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(

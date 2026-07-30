@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from models import (
     Member,
@@ -10,6 +10,7 @@ from models import (
     MembershipSubscription,
     db,
 )
+from services.db_transactions import begin_write_transaction
 
 
 DEFAULT_PLANS = (
@@ -44,12 +45,11 @@ def ensure_default_plans() -> None:
 def purchase_membership(
     member_id: int, plan_code: str, processed_by_user_id: int
 ) -> int:
-    """Apply a demo purchase and renewal as one local SQLite transaction."""
+    """Apply a demo purchase and renewal as one database transaction."""
 
-    db.session.rollback()
     try:
-        db.session.execute(text("BEGIN IMMEDIATE"))
-        member = db.session.get(Member, member_id)
+        begin_write_transaction()
+        member = db.session.get(Member, member_id, with_for_update=True)
         plan = db.session.get(MembershipPlan, plan_code)
         if member is None:
             raise MembershipPurchaseError("Member was not found.")

@@ -9,14 +9,8 @@ class Booking(db.Model):
             "status IN ('booked', 'cancelled')", name="valid_booking_status"
         ),
         db.CheckConstraint(
-            "credit_consumed IN (0, 1)", name="valid_booking_credit_consumed"
-        ),
-        db.CheckConstraint(
-            "credit_refunded IN (0, 1)", name="valid_booking_credit_refunded"
-        ),
-        db.CheckConstraint(
-            "credit_refunded = 0 OR "
-            "(status = 'cancelled' AND credit_consumed = 1)",
+            "(NOT credit_refunded) OR "
+            "(status = 'cancelled' AND credit_consumed)",
             name="valid_booking_refund_state",
         ),
         db.UniqueConstraint(

@@ -8,7 +8,6 @@ class MembershipPlan(db.Model):
         db.CheckConstraint("price_cents >= 0", name="nonnegative_plan_price"),
         db.CheckConstraint("credits > 0", name="positive_plan_credits"),
         db.CheckConstraint("validity_days > 0", name="positive_plan_validity"),
-        db.CheckConstraint("is_active IN (0, 1)", name="valid_plan_active"),
     )
 
     code = db.Column(db.String(40), primary_key=True)

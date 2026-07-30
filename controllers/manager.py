@@ -419,9 +419,12 @@ def update_subscription(member_id: int, status: str):
 def cloud_backup():
     validate_csrf()
     try:
-        database_path = db.engine.url.database
-        result = current_app.extensions["cloud_service"].backup_database(database_path)
-    except (CloudUploadError, FileNotFoundError, OSError) as exc:
+        cloud = current_app.extensions["cloud_service"]
+        if db.engine.dialect.name == "sqlite":
+            result = cloud.backup_database(db.engine.url.database)
+        else:
+            result = cloud.backup_sqlalchemy_database(db.engine)
+    except (CloudUploadError, FileNotFoundError, OSError, ValueError) as exc:
         flash(f"Cloud backup failed: {exc}", "danger")
         return redirect(url_for("manager.dashboard"))
 

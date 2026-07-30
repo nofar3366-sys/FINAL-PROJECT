@@ -15,7 +15,6 @@ class User(db.Model):
         db.CheckConstraint(
             "role IN ('manager', 'member', 'trainer')", name="valid_user_role"
         ),
-        db.CheckConstraint("is_active IN (0, 1)", name="valid_user_active"),
     )
 
     id = db.Column(db.Integer, primary_key=True)

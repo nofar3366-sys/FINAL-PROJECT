@@ -11,7 +11,7 @@ from services.ai_service import GroqAIService, LightweightRetriever
 from services.cloud_service import CloudService
 
 def test_schema_and_health_endpoint(app):
-    assert db.engine.dialect.name == "sqlite"
+    assert db.engine.dialect.name in {"sqlite", "postgresql"}
     inspector = db.inspect(db.engine)
     assert {
         "users",

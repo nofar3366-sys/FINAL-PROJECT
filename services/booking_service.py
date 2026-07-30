@@ -1,8 +1,9 @@
 from datetime import date, datetime
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 
 from models import Booking, Member, WorkoutSession, db
+from services.db_transactions import begin_write_transaction
 
 
 class BookingError(ValueError):
@@ -10,13 +11,14 @@ class BookingError(ValueError):
 
 
 def book_session(member_id: int, workout_session_id: int) -> None:
-    """Book one place and consume one credit under an immediate SQLite lock."""
+    """Book one place and consume one credit under a write transaction."""
 
-    db.session.rollback()
     try:
-        db.session.execute(text("BEGIN IMMEDIATE"))
-        member = db.session.get(Member, member_id)
-        workout_session = db.session.get(WorkoutSession, workout_session_id)
+        begin_write_transaction()
+        member = db.session.get(Member, member_id, with_for_update=True)
+        workout_session = db.session.get(
+            WorkoutSession, workout_session_id, with_for_update=True
+        )
         if member is None or workout_session is None:
             raise BookingError("Member or session was not found.")
         if not member.has_active_membership(date.today()):
@@ -65,10 +67,9 @@ def book_session(member_id: int, workout_session_id: int) -> None:
 def cancel_booking(member_id: int, booking_id: int) -> None:
     """Cancel a future booking and restore its credit exactly once."""
 
-    db.session.rollback()
     try:
-        db.session.execute(text("BEGIN IMMEDIATE"))
-        booking = db.session.get(Booking, booking_id)
+        begin_write_transaction()
+        booking = db.session.get(Booking, booking_id, with_for_update=True)
         if booking is None or booking.member_id != member_id:
             raise BookingError("Booking was not found.")
         if booking.status != "booked":

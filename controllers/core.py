@@ -30,6 +30,7 @@ def health():
     payload = {
         "status": "ok" if database_ok else "degraded",
         "database": "ok" if database_ok else "unavailable",
+        "database_engine": db.engine.dialect.name if database_ok else "unavailable",
         "groq": "configured" if current_app.config["GROQ_API_KEY"] else "mock-fallback",
         "cloud_service": (
             "cloudinary-configured"

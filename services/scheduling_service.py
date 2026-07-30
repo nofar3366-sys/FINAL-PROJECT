@@ -1,8 +1,9 @@
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from models import Trainer, WorkoutSession, db
+from services.db_transactions import begin_write_transaction
 
 
 class SchedulingError(ValueError):
@@ -45,10 +46,11 @@ def create_session(
 def cancel_session(workout_session_id: int) -> None:
     """Cancel a session and refund every active booking once."""
 
-    db.session.rollback()
     try:
-        db.session.execute(text("BEGIN IMMEDIATE"))
-        workout_session = db.session.get(WorkoutSession, workout_session_id)
+        begin_write_transaction()
+        workout_session = db.session.get(
+            WorkoutSession, workout_session_id, with_for_update=True
+        )
         if workout_session is None:
             raise SchedulingError("Session was not found.")
         if workout_session.status != "scheduled":
