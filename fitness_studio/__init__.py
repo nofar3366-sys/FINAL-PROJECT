@@ -118,6 +118,22 @@ def create_app(test_config: dict | None = None) -> Flask:
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
     db.init_app(app)
+
+    # On Vercel, bootstrap SQLite on the first request so module import stays
+    # under the platform kill threshold. Register BEFORE blueprints/auth.
+    if test_config is None and is_vercel_runtime():
+
+        @app.before_request
+        def _vercel_bootstrap_once():
+            if app.config.get("_db_bootstrapped"):
+                return None
+            try:
+                _bootstrap_database(app)
+            except Exception:
+                app.logger.exception("Vercel lazy bootstrap failed")
+            app.config["_db_bootstrapped"] = True
+            return None
+
     app.register_blueprint(core_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(manager_bp)
@@ -133,7 +149,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         app.config["RESEND_API_KEY"], app.config["RECEIPT_FROM_EMAIL"]
     )
 
-    if test_config is None:
+    if test_config is None and not is_vercel_runtime():
         with app.app_context():
             try:
                 _bootstrap_database(app)
@@ -204,7 +220,24 @@ def _bootstrap_database(app: Flask) -> None:
             app.logger.exception("db.create_all failed during bootstrap")
             _rollback()
 
-        # Explicit repair steps — each isolated so one failure cannot abort the rest.
+        # Fast path on Vercel: schema + demo logins only (no heavy demo seed).
+        if is_vercel_runtime():
+            try:
+                ensure_name_columns()
+            except Exception:
+                app.logger.exception("ensure_name_columns failed during bootstrap")
+                _rollback()
+            try:
+                accounts = ensure_demo_accounts()
+            except Exception:
+                app.logger.exception("ensure_demo_accounts failed during bootstrap")
+                _rollback()
+                accounts = {}
+            app.logger.info(
+                "Vercel SQLite bootstrap complete. Accounts: %s", accounts
+            )
+            return
+
         try:
             ensure_name_columns()
         except Exception:

@@ -36,9 +36,10 @@ def health():
         "database_engine": db.engine.dialect.name if database_ok else "unavailable",
         "database_source": current_app.config.get("DATABASE_SOURCE", "unknown"),
         "vercel_runtime": is_vercel_runtime(),
-        "use_postgres_env": os.environ.get("USE_POSTGRES", "").lower()
-        in {"1", "true", "yes"},
+        "force_sqlite": os.environ.get("FORCE_SQLITE", ""),
+        "database_url_present": bool(os.environ.get("DATABASE_URL")),
         "git_sha": (os.environ.get("VERCEL_GIT_COMMIT_SHA") or "")[:7] or None,
+        "bootstrapped": bool(current_app.config.get("_db_bootstrapped")),
         "groq": "configured" if current_app.config["GROQ_API_KEY"] else "mock-fallback",
         "email": (
             "resend-configured"

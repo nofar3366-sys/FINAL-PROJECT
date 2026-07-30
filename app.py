@@ -1,41 +1,53 @@
 """Vercel / local WSGI entrypoint.
 
-Vercel Serverless Functions import this module and look for a global `app`.
-On Vercel we force SQLite before any app factory work so a bad DATABASE_URL
-cannot hang cold starts (FUNCTION_INVOCATION_FAILED).
+Critical for Vercel: never touch remote Postgres during module import.
+A hanging Supabase probe/bootstrap causes FUNCTION_INVOCATION_FAILED.
 """
+
+from __future__ import annotations
 
 import logging
 import os
+import traceback
 
-# Hard override for serverless: never probe/bootstrap remote Postgres at import.
-if os.environ.get("VERCEL") == "1" or os.environ.get("VERCEL_ENV"):
+logger = logging.getLogger("app_entry")
+
+# --- Must run BEFORE importing fitness_studio ---
+_ON_VERCEL = os.environ.get("VERCEL") == "1" or bool(os.environ.get("VERCEL_ENV"))
+if _ON_VERCEL:
     os.environ["FORCE_SQLITE"] = "1"
     os.environ["USE_POSTGRES"] = "0"
+    os.environ["USE_SQLITE"] = "1"
+    # Prevent any import-time code from seeing a remote DATABASE_URL.
+    os.environ.pop("DATABASE_URL", None)
+    os.environ.pop("SUPABASE_DB_PASSWORD", None)
 
-logger = logging.getLogger(__name__)
 
-
-def _recovery_app():
-    from flask import Flask
+def _build_recovery_app(error: BaseException | None = None):
+    from flask import Flask, jsonify
 
     recovery = Flask(__name__)
-    recovery.secret_key = "recovery-mode-only"
+    recovery.secret_key = os.environ.get("SECRET_KEY", "recovery-mode-only")
+    detail = "".join(traceback.format_exception_only(type(error), error)).strip() if error else ""
 
     @recovery.get("/health")
     def health():
-        return {
-            "status": "degraded",
-            "database": "unavailable",
-            "hint": "App recovered from startup failure",
-        }, 503
+        return jsonify(
+            {
+                "status": "degraded",
+                "database": "unavailable",
+                "mode": "recovery",
+                "error": detail[:300],
+            }
+        ), 503
 
     @recovery.route("/", defaults={"path": ""})
     @recovery.route("/<path:path>")
     def any_path(path: str):
         return (
             "<h1>Fitness Studio</h1>"
-            "<p>Temporary startup recovery mode. Please refresh shortly.</p>"
+            "<p>Recovery mode (startup error).</p>"
+            f"<pre>{detail}</pre>"
             "<p><a href='/health'>/health</a></p>",
             503,
         )
@@ -47,9 +59,9 @@ try:
     from fitness_studio import create_app
 
     app = create_app()
-except Exception:
-    logger.exception("create_app() failed at import time; serving recovery app")
-    app = _recovery_app()
+except Exception as exc:  # noqa: BLE001 — must never fail to expose WSGI app
+    logger.exception("create_app failed; using recovery app")
+    app = _build_recovery_app(exc)
 
 
 if __name__ == "__main__":
