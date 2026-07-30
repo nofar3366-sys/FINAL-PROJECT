@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}AI Studio Assistant | Fitness Studio{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-xl-9">
+        <div class="assistant-shell">
+            <div class="assistant-header">
+                <div class="ai-orb">AI</div>
+                <div><span class="eyebrow">POWERED BY GROQ + RAG</span><h1 class="h3 mb-1">Studio Assistant</h1><p class="mb-0">Ask about policies, class schedules, cancellations, or safe workout guidance.</p></div>
+                <span class="status-pill status-available ms-lg-auto">Online fallback ready</span>
+            </div>
+            <div class="assistant-body">
+                {% if ai_answer %}
+                    <div class="chat-message assistant-message">
+                        <div class="chat-avatar">AI</div>
+                        <div>
+                            <small>
+                                {% if recommendation_executed %}
+                                    Workout Recommendation Agent · personalized profile + live SQLite schedule
+                                {% elif skill_executed %}
+                                    Skill executed: get_class_availability_skill
+                                {% else %}
+                                    RAG response: studio policy context
+                                {% endif %}
+                            </small>
+                            <p>{{ ai_answer }}</p>
+                        </div>
+                    </div>
+                {% else %}
+                    <div class="assistant-welcome">
+                        <h2 class="h4">How can I support your training today?</h2>
+                        <div class="row g-2 mt-3">
+                            <div class="col-md-4"><span class="prompt-example">What classes are available this week?</span></div>
+                            <div class="col-md-4"><span class="prompt-example">What is the cancellation policy?</span></div>
+                            <div class="col-md-4"><span class="prompt-example">How should I prepare for HIIT?</span></div>
+                        </div>
+                    </div>
+                {% endif %}
+            </div>
+            <form class="assistant-input" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input class="form-control form-control-lg" name="question" placeholder="Ask the studio assistant..." required autofocus>
+                <button class="btn btn-primary btn-lg" type="submit">Send</button>
+            </form>
+            <p class="assistant-note">If Groq is unavailable or not configured, a safe local RAG response is shown automatically.</p>
+        </div>
+        <div class="card content-card mt-4">
+            <div class="card-body p-4">
+                <div class="row align-items-center g-3">
+                    <div class="col-lg-5">
+                        <span class="eyebrow text-primary">EXPLICIT AI SKILL</span>
+                        <h2 class="h5 mb-1">Check class availability</h2>
+                        <p class="text-secondary mb-0">Run the SQLite-backed <code>get_class_availability_skill</code> directly.</p>
+                    </div>
+                    <div class="col-lg-7">
+                        <form class="row g-2" method="post" action="{{ url_for('member.assistant_availability') }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <div class="col-sm-4"><input class="form-control" type="date" name="date" value="{{ suggested_date }}" required></div>
+                            <div class="col-sm-5"><input class="form-control" name="specialty" placeholder="Yoga, HIIT, Strength..." required></div>
+                            <div class="col-sm-3"><button class="btn btn-dark w-100" type="submit">Run skill</button></div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="card content-card mt-4">
+            <div class="card-body p-4">
+                <div class="row align-items-center g-3">
+                    <div class="col-lg-5">
+                        <span class="eyebrow text-primary">AI RECOMMENDATION AGENT</span>
+                        <h2 class="h5 mb-1">Get a personalized workout</h2>
+                        <p class="text-secondary mb-0">Uses your membership, credits, booking history, goal, and the live weekly schedule.</p>
+                    </div>
+                    <div class="col-lg-7">
+                        <form class="row g-2" method="post" action="{{ url_for('member.assistant_recommendation') }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <div class="col-sm-9"><input class="form-control" name="goal" value="{{ goal|default('') }}" placeholder="Example: improve strength as a beginner" required></div>
+                            <div class="col-sm-3"><button class="btn btn-primary w-100" type="submit">Recommend</button></div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

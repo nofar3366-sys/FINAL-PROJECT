@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Trainers | Fitness Studio{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <h1 class="h2 mb-0">Trainers</h1>
+    <a class="btn btn-primary" href="{{ url_for('manager.new_trainer') }}">Add trainer</a>
+</div>
+<form class="row g-2 mb-3" method="get">
+    <div class="col-sm-8 col-md-5"><input class="form-control" name="q" value="{{ search }}" placeholder="Search name or specialty"></div>
+    <div class="col-auto"><button class="btn btn-outline-secondary" type="submit">Search</button></div>
+</form>
+<div class="card border-0 shadow-sm">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead><tr><th>Name</th><th>Specialty</th><th>Email</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+            {% for trainer in trainers %}
+                <tr>
+                    <td>{{ trainer.full_name }}</td>
+                    <td>{{ trainer.specialty }}</td>
+                    <td>{{ trainer.email or '—' }}</td>
+                    <td><span class="badge text-bg-{{ 'success' if trainer.is_active else 'secondary' }}">{{ 'Active' if trainer.is_active else 'Inactive' }}</span></td>
+                    <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('manager.trainer_detail', trainer_id=trainer.id) }}">View</a></td>
+                </tr>
+            {% else %}
+                <tr><td colspan="5" class="text-center text-secondary py-4">No trainers found.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

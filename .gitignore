@@ -1,0 +1,48 @@
+# Virtual environments — never upload
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache / bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+
+# Local secrets and environment
+.env
+.env.*
+!.env.example
+
+# Local databases and Flask instance data
+instance/
+*.db
+*.sqlite
+*.sqlite3
+
+# Testing / tooling
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Packaging / build
+dist/
+build/
+*.egg-info/
+.eggs/

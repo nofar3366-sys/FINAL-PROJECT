@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Login | Fitness Studio{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 col-lg-4">
+        <div class="card shadow-sm border-0">
+            <div class="card-body p-4">
+                <h1 class="h3 mb-3">Sign in</h1>
+                <p class="text-secondary">Access your fitness studio account.</p>
+                <form method="post">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label" for="email">Email</label>
+                        <input class="form-control" id="email" name="email" type="email"
+                               value="{{ request.form.get('email', '') }}" required autofocus>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="password">Password</label>
+                        <input class="form-control" id="password" name="password" type="password" required>
+                    </div>
+                    <button class="btn btn-primary w-100" type="submit">Login</button>
+                </form>
+                <p class="text-center mt-3 mb-0">
+                    New member? <a href="{{ url_for('auth.register') }}">Register</a>
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

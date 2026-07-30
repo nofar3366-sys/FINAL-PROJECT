@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Weekly Class Schedule | Fitness Studio{% endblock %}
+{% block content %}
+<div class="page-heading">
+    <div>
+        <span class="eyebrow">TRAIN. PROGRESS. REPEAT.</span>
+        <h1>Weekly Class Schedule</h1>
+        <p>Browse studio workouts from Sunday through Saturday.</p>
+    </div>
+    <div class="credit-chip"><span>Available credits</span><strong>{{ member.credit_balance }}</strong></div>
+</div>
+
+<section class="weekly-calendar" aria-label="Weekly workout calendar">
+    {% for day in week_days %}
+        <div class="calendar-day">
+            <header class="calendar-day-header">
+                <h2>{{ day }}</h2>
+                <span>{{ workouts_by_day[day]|length }} classes</span>
+            </header>
+            <div class="calendar-day-body">
+                {% for workout in workouts_by_day[day] %}
+                    {% set is_full = workout.remaining_capacity == 0 %}
+                    <article class="calendar-workout workout-{{ workout.type }}" dir="auto">
+                        <div class="workout-card-top">
+                            <time datetime="{{ workout.time }}">{{ workout.time }}</time>
+                            <span class="workout-type">{{ workout.type_label }}</span>
+                        </div>
+                        <small class="workout-card-date">{{ workout.date }}</small>
+                        <h3>{{ workout.title }}</h3>
+                        <p>{{ workout.trainer }}</p>
+                        <small>{{ workout.specialty }} · {{ workout.duration_minutes }} min</small>
+                        <div class="workout-capacity">
+                            {% if is_full %}
+                                <span class="status-pill status-full">Full</span>
+                            {% else %}
+                                <span class="status-pill status-available">{{ workout.remaining_capacity }} spots</span>
+                            {% endif %}
+                        </div>
+                        {% if workout.is_booked %}
+                            <button class="btn btn-sm btn-outline-secondary w-100" disabled>Booked</button>
+                        {% elif not member.has_active_membership() or member.credit_balance <= 0 %}
+                            <a class="btn btn-sm btn-warning w-100" href="{{ url_for('member.renewal') }}">View plans</a>
+                        {% elif is_full %}
+                            <button class="btn btn-sm btn-outline-secondary w-100" disabled>Class full</button>
+                        {% else %}
+                            <form method="post" action="{{ url_for('member.book', session_id=workout.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm btn-primary w-100" type="submit">Book · 1 credit</button>
+                            </form>
+                        {% endif %}
+                    </article>
+                {% else %}
+                    <div class="calendar-empty">No workouts</div>
+                {% endfor %}
+            </div>
+        </div>
+    {% endfor %}
+</section>
+
+<section class="card content-card mt-4">
+    <div class="card-body p-4">
+        <span class="eyebrow text-primary">YOUR RESERVATIONS</span>
+        <h2 class="h4 mb-3">My booked workouts</h2>
+        <div class="row g-3">
+            {% for booking in bookings if booking.status == 'booked' %}
+                <div class="col-md-6 col-xl-4">
+                    <div class="booking-row">
+                        <div>
+                            <strong>{{ booking.workout_session.title }}</strong>
+                            <small>{{ booking.workout_session.starts_at.strftime('%A, %d %b · %H:%M') }}</small>
+                        </div>
+                        <form method="post" action="{{ url_for('member.cancel', booking_id=booking.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-sm btn-outline-danger" type="submit">Cancel</button>
+                        </form>
+                    </div>
+                </div>
+            {% else %}
+                <div class="col-12"><div class="empty-state">No active bookings.</div></div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+{% endblock %}

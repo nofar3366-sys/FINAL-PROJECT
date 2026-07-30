@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ trainer.full_name }} | Fitness Studio{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-4">
+    <div>
+        <h1 class="h2">{{ trainer.full_name }}</h1>
+        <p class="text-secondary mb-0">{{ trainer.specialty }}</p>
+    </div>
+    <a class="btn btn-primary" href="{{ url_for('manager.edit_trainer', trainer_id=trainer.id) }}">Edit</a>
+</div>
+<div class="card border-0 shadow-sm">
+    <div class="card-body">
+        <dl class="row mb-0">
+            <dt class="col-sm-4">Email</dt><dd class="col-sm-8">{{ trainer.email or '—' }}</dd>
+            <dt class="col-sm-4">Phone</dt><dd class="col-sm-8">{{ trainer.phone or '—' }}</dd>
+            <dt class="col-sm-4">Portal login</dt><dd class="col-sm-8">{{ 'Enabled' if trainer.user and trainer.user.is_active else 'Disabled' }}</dd>
+            <dt class="col-sm-4">Status</dt><dd class="col-sm-8">{{ 'Active' if trainer.is_active else 'Inactive' }}</dd>
+        </dl>
+        <hr>
+        {% if trainer.is_active %}
+            <form method="post" action="{{ url_for('manager.deactivate_trainer', trainer_id=trainer.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-outline-danger" type="submit">Deactivate trainer</button>
+            </form>
+        {% else %}
+            <form method="post" action="{{ url_for('manager.activate_trainer', trainer_id=trainer.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-outline-success" type="submit">Activate trainer</button>
+            </form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

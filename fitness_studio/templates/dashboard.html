@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Dashboard | Fitness Studio{% endblock %}
+{% block content %}
+{% if g.user.role == 'manager' %}
+    <div class="dashboard-hero mb-4">
+        <div>
+            <span class="eyebrow">STUDIO OPERATIONS</span>
+            <h1 class="display-6 fw-bold mb-1">Manager dashboard</h1>
+            <p class="mb-0 opacity-75">Members, trainers, attendance, and revenue at a glance.</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            <a class="btn btn-warning fw-semibold" href="{{ url_for('manager.reports_csv') }}">Download CSV Report</a>
+            <form method="post" action="{{ url_for('manager.cloud_backup') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-outline-light fw-semibold" type="submit">Backup DB to Cloud</button>
+            </form>
+        </div>
+    </div>
+    {% if cloud_status %}
+        <div class="cloud-confirmation mb-4">
+            <span class="status-pill status-available">Cloud {{ cloud_status|title }}</span>
+            <div><strong>Backup confirmation</strong><small>{{ cloud_reference }}</small></div>
+            <div class="d-flex flex-wrap gap-2 ms-auto">
+                {% if cloud_url %}
+                    <a class="btn btn-sm btn-outline-success" href="{{ cloud_url }}" target="_blank" rel="noopener noreferrer">View Raw DB File</a>
+                {% endif %}
+                {% if cloud_snapshot_url %}
+                    <a class="btn btn-sm btn-success" href="{{ cloud_snapshot_url }}" target="_blank" rel="noopener noreferrer">View Live Database Tables in Cloud</a>
+                {% endif %}
+            </div>
+        </div>
+    {% endif %}
+    <div class="row g-3 mb-4">
+        <div class="col-sm-6 col-lg"><div class="card stat-card"><div class="card-body"><span class="text-secondary">Members</span><div class="display-6">{{ counts.members }}</div></div></div></div>
+        <div class="col-sm-6 col-lg"><div class="card stat-card"><div class="card-body"><span class="text-secondary">Trainers</span><div class="display-6">{{ counts.trainers }}</div></div></div></div>
+        <div class="col-sm-6 col-lg"><div class="card stat-card"><div class="card-body"><span class="text-secondary">Sessions</span><div class="display-6">{{ counts.sessions }}</div></div></div></div>
+        <div class="col-sm-6 col-lg"><div class="card stat-card"><div class="card-body"><span class="text-secondary">Active bookings</span><div class="display-6">{{ counts.bookings }}</div></div></div></div>
+        <div class="col-sm-6 col-lg"><div class="card stat-card"><div class="card-body"><span class="text-secondary">Demo revenue</span><div class="h3 mt-2">${{ '%.2f'|format(counts.revenue_cents / 100) }}</div></div></div></div>
+    </div>
+    <div class="row g-4">
+        <div class="col-lg-6">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between mb-3">
+                        <h2 class="h5">Recent members</h2>
+                        <a href="{{ url_for('manager.members') }}">Manage</a>
+                    </div>
+                    {% for item in members %}
+                        <a class="list-group-item list-group-item-action px-0" href="{{ url_for('manager.member_detail', member_id=item.id) }}">
+                            {{ item.full_name }} <span class="text-secondary float-end">{{ item.credit_balance }} credits</span>
+                        </a>
+                    {% else %}<p class="text-secondary">No members yet.</p>{% endfor %}
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between mb-3">
+                        <h2 class="h5">Recent trainers</h2>
+                        <a href="{{ url_for('manager.trainers') }}">Manage</a>
+                    </div>
+                    {% for item in trainers %}
+                        <a class="list-group-item list-group-item-action px-0" href="{{ url_for('manager.trainer_detail', trainer_id=item.id) }}">
+                            {{ item.full_name }} <span class="text-secondary float-end">{{ item.specialty }}</span>
+                        </a>
+                    {% else %}<p class="text-secondary">No trainers yet.</p>{% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+{% else %}
+    <div class="dashboard-hero mb-4">
+        <div>
+            <span class="eyebrow">MEMBER OVERVIEW</span>
+            <h1 class="display-6 fw-bold mb-2">Welcome, {{ member.full_name }}</h1>
+            <p class="mb-0 opacity-75">Stay consistent. Your next great workout starts here.</p>
+        </div>
+        <span class="status-pill {{ 'status-available' if member.has_active_membership() else 'status-full' }}">
+            {{ 'Membership active' if member.has_active_membership() else 'Action required' }}
+        </span>
+    </div>
+    <div class="row g-3 mb-4">
+        <div class="col-sm-6 col-xl-3"><div class="card stat-card stat-accent"><div class="card-body"><span class="stat-label">Active credits</span><div class="stat-value">{{ member.credit_balance }}</div><small>Available to book</small></div></div></div>
+        <div class="col-sm-6 col-xl-3"><div class="card stat-card"><div class="card-body"><span class="stat-label">Used credits</span><div class="stat-value">{{ used_credits }}</div><small>Current bookings</small></div></div></div>
+        <div class="col-sm-6 col-xl-3"><div class="card stat-card"><div class="card-body"><span class="stat-label">Membership expires</span><div class="h4 mt-3 mb-2">{{ member.membership_expires_on }}</div><small>Renew anytime</small></div></div></div>
+        <div class="col-sm-6 col-xl-3"><div class="card stat-card"><div class="card-body"><span class="stat-label">Upcoming workouts</span><div class="stat-value">{{ upcoming_bookings|length }}</div><small>Personally booked</small></div></div></div>
+    </div>
+    <div class="card content-card">
+        <div class="card-body p-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div><span class="eyebrow text-primary">YOUR TRAINING</span><h2 class="h4 mb-0">Upcoming workouts</h2></div>
+                <a class="btn btn-primary" href="{{ url_for('member.schedule') }}">Browse classes</a>
+            </div>
+            <div class="row g-3">
+                {% for booking in upcoming_bookings %}
+                    <div class="col-md-6 col-xl-4">
+                        <div class="workout-item">
+                            <div class="workout-date"><strong>{{ booking.workout_session.starts_at.strftime('%d') }}</strong><span>{{ booking.workout_session.starts_at.strftime('%b') }}</span></div>
+                            <div><h3 class="h6 mb-1">{{ booking.workout_session.title }}</h3><small class="text-secondary">{{ booking.workout_session.starts_at.strftime('%A at %H:%M') }} · {{ booking.workout_session.trainer.full_name }}</small></div>
+                        </div>
+                    </div>
+                {% else %}
+                    <div class="col-12"><div class="empty-state">No upcoming workouts yet. Explore the schedule and reserve your spot.</div></div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+{% endif %}
+{% endblock %}
