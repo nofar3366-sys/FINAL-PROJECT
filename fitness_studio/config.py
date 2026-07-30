@@ -1,5 +1,8 @@
+import json
 import os
 import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 
@@ -7,6 +10,36 @@ from dotenv import load_dotenv
 
 
 load_dotenv()
+
+# #region agent log
+_DEBUG_LOG = Path(__file__).resolve().parent.parent / "debug-17ef2f.log"
+
+
+def _agent_log(
+    location: str,
+    message: str,
+    data: dict | None = None,
+    *,
+    hypothesis_id: str = "A",
+    run_id: str = "pre-fix",
+) -> None:
+    try:
+        payload = {
+            "sessionId": "17ef2f",
+            "timestamp": int(time.time() * 1000),
+            "location": location,
+            "message": message,
+            "hypothesisId": hypothesis_id,
+            "data": data or {},
+            "runId": run_id,
+        }
+        with _DEBUG_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload) + "\n")
+    except Exception:
+        pass
+
+
+# #endregion
 
 
 def is_vercel_runtime() -> bool:
@@ -117,31 +150,63 @@ def sqlalchemy_engine_options(database_uri: str) -> dict:
 
 
 def probe_database_uri(database_uri: str, timeout_seconds: float = 3.0) -> bool:
-    """Return True when a short SELECT 1 succeeds against the URI."""
+    """Return True when a short SELECT 1 succeeds against the URI.
+
+    Wall-clock bounded: DNS failures on dead Supabase hosts can ignore
+    ``connect_timeout`` and hang for many seconds, which breaks Vercel cold starts.
+    """
 
     if not database_uri:
         return False
     if database_uri.startswith("sqlite"):
         return True
 
-    from sqlalchemy import create_engine, text
+    def _probe() -> bool:
+        from sqlalchemy import create_engine, text
 
-    engine = create_engine(
-        database_uri,
-        pool_pre_ping=False,
-        connect_args={
-            "connect_timeout": max(1, int(timeout_seconds)),
-            "prepare_threshold": None,
-        },
-    )
+        engine = create_engine(
+            database_uri,
+            pool_pre_ping=False,
+            connect_args={
+                "connect_timeout": max(1, int(timeout_seconds)),
+                "prepare_threshold": None,
+            },
+        )
+        try:
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+            return True
+        except Exception:
+            return False
+        finally:
+            engine.dispose()
+
+    # Hard wall-clock cap — connect_timeout alone does not bound DNS ENOTFOUND.
+    # Important: shutdown(wait=False) so a hung DNS thread cannot block return.
+    wall = max(0.5, float(timeout_seconds))
+    started = time.time()
+    pool = ThreadPoolExecutor(max_workers=1)
     try:
-        with engine.connect() as connection:
-            connection.execute(text("SELECT 1"))
-        return True
-    except Exception:
-        return False
+        future = pool.submit(_probe)
+        ok = bool(future.result(timeout=wall))
+    except (FuturesTimeout, Exception):
+        ok = False
     finally:
-        engine.dispose()
+        pool.shutdown(wait=False, cancel_futures=True)
+    # #region agent log
+    _agent_log(
+        "config.py:probe_database_uri",
+        "probe_finished",
+        {
+            "ok": ok,
+            "elapsed_s": round(time.time() - started, 3),
+            "wall_s": wall,
+            "is_vercel": is_vercel_runtime(),
+        },
+        hypothesis_id="E",
+    )
+    # #endregion
+    return ok
 
 
 def resolve_runtime_database_uri(instance_path: str | Path | None = None) -> tuple[str, str]:
@@ -151,8 +216,9 @@ def resolve_runtime_database_uri(instance_path: str | Path | None = None) -> tup
     ``sqlite-forced``, or ``sqlite``. If configured Postgres is unreachable, fall
     back to SQLite so the academic demo still boots on Vercel.
 
-    Set ``FORCE_SQLITE=1`` (or ``USE_SQLITE=1``) to skip Postgres entirely — useful
-    on Vercel when the Supabase tenant/URL is invalid and cold starts must be fast.
+    On Vercel, SQLite is always used (no Postgres probe). Dead Supabase DNS can
+    hang ~6s even with connect_timeout=1, which kills serverless cold starts.
+    Set ``FORCE_SQLITE=1`` / ``USE_SQLITE=1`` locally to skip Postgres entirely.
     """
 
     force_sqlite = os.environ.get("FORCE_SQLITE", "").lower() in {
@@ -160,26 +226,66 @@ def resolve_runtime_database_uri(instance_path: str | Path | None = None) -> tup
         "true",
         "yes",
     } or os.environ.get("USE_SQLITE", "").lower() in {"1", "true", "yes"}
-    # Opt into Postgres on Vercel only when USE_POSTGRES=1. By default Vercel
-    # uses SQLite so a bad Supabase tenant cannot break cold starts / demos.
     use_postgres = os.environ.get("USE_POSTGRES", "").lower() in {
         "1",
         "true",
         "yes",
     }
-    if force_sqlite or (is_vercel_runtime() and not use_postgres):
-        return sqlite_fallback_uri(instance_path), "sqlite-forced"
+    on_vercel = is_vercel_runtime()
+
+    # Vercel: never probe Postgres. USE_POSTGRES cannot override this while the
+    # configured Supabase tenant is invalid / DNS-hanging.
+    if force_sqlite or on_vercel:
+        uri = sqlite_fallback_uri(instance_path)
+        # #region agent log
+        _agent_log(
+            "config.py:resolve_runtime_database_uri",
+            "sqlite_forced",
+            {
+                "on_vercel": on_vercel,
+                "force_sqlite": force_sqlite,
+                "use_postgres_ignored": use_postgres if on_vercel else False,
+                "source": "sqlite-forced",
+            },
+            hypothesis_id="A",
+        )
+        # #endregion
+        return uri, "sqlite-forced"
 
     configured = resolve_database_uri(instance_path)
     if configured.startswith("sqlite"):
+        # #region agent log
+        _agent_log(
+            "config.py:resolve_runtime_database_uri",
+            "native_sqlite",
+            {"source": "sqlite"},
+            hypothesis_id="B",
+        )
+        # #endregion
         return configured, "sqlite"
 
-    # Fail fast on Vercel: multi-second pooler retries were timing out cold starts.
-    probe_timeout = 1.0 if is_vercel_runtime() else 2.0
+    probe_timeout = 1.5
     if probe_database_uri(configured, timeout_seconds=probe_timeout):
+        # #region agent log
+        _agent_log(
+            "config.py:resolve_runtime_database_uri",
+            "postgres_ok",
+            {"source": "postgres"},
+            hypothesis_id="E",
+        )
+        # #endregion
         return configured, "postgres"
 
-    return sqlite_fallback_uri(instance_path), "sqlite-fallback"
+    uri = sqlite_fallback_uri(instance_path)
+    # #region agent log
+    _agent_log(
+        "config.py:resolve_runtime_database_uri",
+        "sqlite_fallback",
+        {"source": "sqlite-fallback", "use_postgres": use_postgres},
+        hypothesis_id="E",
+    )
+    # #endregion
+    return uri, "sqlite-fallback"
 
 
 class Config:

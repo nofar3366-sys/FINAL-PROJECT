@@ -1,6 +1,9 @@
+import os
+
 from flask import Blueprint, current_app, g, jsonify, redirect, url_for
 from sqlalchemy import text
 
+from fitness_studio.config import is_vercel_runtime
 from models import db
 
 
@@ -32,6 +35,10 @@ def health():
         "database": "ok" if database_ok else "unavailable",
         "database_engine": db.engine.dialect.name if database_ok else "unavailable",
         "database_source": current_app.config.get("DATABASE_SOURCE", "unknown"),
+        "vercel_runtime": is_vercel_runtime(),
+        "use_postgres_env": os.environ.get("USE_POSTGRES", "").lower()
+        in {"1", "true", "yes"},
+        "git_sha": (os.environ.get("VERCEL_GIT_COMMIT_SHA") or "")[:7] or None,
         "groq": "configured" if current_app.config["GROQ_API_KEY"] else "mock-fallback",
         "email": (
             "resend-configured"

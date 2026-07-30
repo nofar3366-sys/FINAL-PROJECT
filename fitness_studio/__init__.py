@@ -87,6 +87,23 @@ def create_app(test_config: dict | None = None) -> Flask:
         app.config["SQLALCHEMY_DATABASE_URI"] = uri
         app.config["SQLALCHEMY_ENGINE_OPTIONS"] = sqlalchemy_engine_options(uri)
         app.config["DATABASE_SOURCE"] = source
+        # #region agent log
+        try:
+            from fitness_studio.config import _agent_log
+
+            _agent_log(
+                "fitness_studio/__init__.py:create_app",
+                "database_selected",
+                {
+                    "source": source,
+                    "is_sqlite": str(uri).startswith("sqlite"),
+                    "vercel": is_vercel_runtime(),
+                },
+                hypothesis_id="A",
+            )
+        except Exception:
+            pass
+        # #endregion
         if source in {"sqlite-fallback", "sqlite-forced"}:
             app.logger.error(
                 "Using SQLite (%s) at %s. Configure a valid DATABASE_URL "
