@@ -160,7 +160,14 @@ def resolve_runtime_database_uri(instance_path: str | Path | None = None) -> tup
         "true",
         "yes",
     } or os.environ.get("USE_SQLITE", "").lower() in {"1", "true", "yes"}
-    if force_sqlite:
+    # Opt into Postgres on Vercel only when USE_POSTGRES=1. By default Vercel
+    # uses SQLite so a bad Supabase tenant cannot break cold starts / demos.
+    use_postgres = os.environ.get("USE_POSTGRES", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if force_sqlite or (is_vercel_runtime() and not use_postgres):
         return sqlite_fallback_uri(instance_path), "sqlite-forced"
 
     configured = resolve_database_uri(instance_path)
