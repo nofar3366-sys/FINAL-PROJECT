@@ -12,8 +12,12 @@ class Trainer(db.Model):
         nullable=True,
         unique=True,
     )
-    first_name = db.Column(db.String(80), nullable=False)
-    last_name = db.Column(db.String(80), nullable=False)
+    first_name = db.Column(
+        db.String(80), nullable=False, default="", server_default=""
+    )
+    last_name = db.Column(
+        db.String(80), nullable=False, default="", server_default=""
+    )
     specialty = db.Column(db.String(150), nullable=False)
     phone = db.Column(db.String(30))
     email = db.Column(db.String(255), unique=True)

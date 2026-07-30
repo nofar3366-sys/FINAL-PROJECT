@@ -19,7 +19,12 @@ from models.seed import ensure_demo_data, seed_demo_command
 from services.ai_service import GroqAIService
 from services.email_service import ReceiptEmailService
 from services.membership_service import ensure_default_plans
-from services.schema_service import repair_database, upgrade_trainer_accounts
+from services.schema_service import (
+    ensure_demo_accounts,
+    ensure_name_columns,
+    repair_database,
+    upgrade_trainer_accounts,
+)
 
 from .config import (
     Config,
@@ -61,7 +66,15 @@ def _writable_instance_path(project_root: Path) -> Path:
 def create_app(test_config: dict | None = None) -> Flask:
     package_dir = Path(__file__).resolve().parent
     project_root = package_dir.parent
-    instance_path = _writable_instance_path(project_root)
+    try:
+        instance_path = _writable_instance_path(project_root)
+    except Exception:
+        # Never fail app construction over instance-path issues (esp. Vercel).
+        instance_path = Path(tempfile.gettempdir()).resolve() / "fitness_studio_instance"
+        try:
+            instance_path.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            instance_path = Path(tempfile.gettempdir()).resolve()
 
     app = Flask(
         __name__,
@@ -83,27 +96,16 @@ def create_app(test_config: dict | None = None) -> Flask:
     else:
         # Probe configured Postgres; if unreachable, fall back to SQLite so the
         # Vercel demo never hard-crashes on a bad DATABASE_URL / tenant.
-        uri, source = resolve_runtime_database_uri(instance_path)
+        try:
+            uri, source = resolve_runtime_database_uri(instance_path)
+        except Exception:
+            app.logger.exception("resolve_runtime_database_uri failed; using SQLite")
+            from .config import sqlite_fallback_uri
+
+            uri, source = sqlite_fallback_uri(instance_path), "sqlite-forced"
         app.config["SQLALCHEMY_DATABASE_URI"] = uri
         app.config["SQLALCHEMY_ENGINE_OPTIONS"] = sqlalchemy_engine_options(uri)
         app.config["DATABASE_SOURCE"] = source
-        # #region agent log
-        try:
-            from fitness_studio.config import _agent_log
-
-            _agent_log(
-                "fitness_studio/__init__.py:create_app",
-                "database_selected",
-                {
-                    "source": source,
-                    "is_sqlite": str(uri).startswith("sqlite"),
-                    "vercel": is_vercel_runtime(),
-                },
-                hypothesis_id="A",
-            )
-        except Exception:
-            pass
-        # #endregion
         if source in {"sqlite-fallback", "sqlite-forced"}:
             app.logger.error(
                 "Using SQLite (%s) at %s. Configure a valid DATABASE_URL "
@@ -189,70 +191,83 @@ def _register_error_handlers(app: Flask) -> None:
 def _bootstrap_database(app: Flask) -> None:
     """Crash-proof startup: never raise out of bootstrap on Vercel cold starts."""
 
+    def _rollback() -> None:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+
     try:
         try:
             db.create_all()
         except Exception:
             app.logger.exception("db.create_all failed during bootstrap")
-            try:
-                db.session.rollback()
-            except Exception:
-                pass
-            return
+            _rollback()
+
+        # Explicit repair steps — each isolated so one failure cannot abort the rest.
+        try:
+            ensure_name_columns()
+        except Exception:
+            app.logger.exception("ensure_name_columns failed during bootstrap")
+            _rollback()
+
+        try:
+            ensure_demo_accounts()
+        except Exception:
+            app.logger.exception("ensure_demo_accounts failed during bootstrap")
+            _rollback()
 
         try:
             repair_report = repair_database()
             app.logger.info("Database repair report: %s", repair_report)
         except Exception:
             app.logger.exception("repair_database failed during bootstrap")
-            try:
-                db.session.rollback()
-            except Exception:
-                pass
+            _rollback()
+            repair_report = {}
 
         try:
             ensure_default_plans()
         except Exception:
             app.logger.exception("ensure_default_plans failed during bootstrap")
-            try:
-                db.session.rollback()
-            except Exception:
-                pass
+            _rollback()
 
-        if db.engine.dialect.name == "sqlite":
-            try:
+        try:
+            if db.engine.dialect.name == "sqlite":
                 db.session.execute(text("PRAGMA journal_mode=DELETE"))
                 db.session.commit()
-            except SQLAlchemyError:
-                db.session.rollback()
+        except Exception:
+            app.logger.exception("SQLite PRAGMA setup failed during bootstrap")
+            _rollback()
 
         try:
             seeded = ensure_demo_data()
         except Exception:
             app.logger.exception("ensure_demo_data failed during bootstrap")
             seeded = False
-            try:
-                db.session.rollback()
-            except Exception:
-                pass
+            _rollback()
+
+        demo_accounts = {}
+        try:
+            demo_accounts = (repair_report or {}).get("demo_accounts", {}) or {}
+            if not demo_accounts:
+                demo_accounts = ensure_demo_accounts()
+        except Exception:
+            app.logger.exception("Final demo-account ensure failed during bootstrap")
+            _rollback()
 
         try:
-            demo_accounts = repair_database().get("demo_accounts", {})
+            dialect_name = db.engine.dialect.name
         except Exception:
-            demo_accounts = {}
-
+            dialect_name = "unknown"
         app.logger.info(
             "Database bootstrap complete (%s / %s). Demo seed %s. Accounts: %s.",
-            db.engine.dialect.name,
+            dialect_name,
             app.config.get("DATABASE_SOURCE"),
             "applied" if seeded else "skipped/failed",
             demo_accounts,
         )
     except Exception:
-        try:
-            db.session.rollback()
-        except Exception:
-            pass
+        _rollback()
         app.logger.exception(
             "Database bootstrap failed. Check DATABASE_URL / Supabase connectivity."
         )

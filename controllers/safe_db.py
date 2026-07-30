@@ -41,17 +41,30 @@ def recover_from_db_error(message: str | None = None) -> None:
 
 
 def db_safe(view):
-    """Decorator: convert unhandled SQLAlchemy errors into a login redirect."""
+    """Decorator: convert unhandled DB/ORM errors into a login redirect."""
 
     @wraps(view)
     def wrapped_view(*args, **kwargs):
+        from werkzeug.exceptions import HTTPException
+
         try:
             return view(*args, **kwargs)
+        except HTTPException:
+            raise
         except SQLAlchemyError:
             current_app.logger.exception(
                 "Database error in %s", getattr(view, "__name__", "view")
             )
             recover_from_db_error()
+            return redirect(url_for("auth.login"))
+        except Exception:
+            # Schema drift / missing columns / orphaned profiles must not 500.
+            current_app.logger.exception(
+                "Unexpected error in %s", getattr(view, "__name__", "view")
+            )
+            recover_from_db_error(
+                "Something went wrong while loading that page. Please sign in again."
+            )
             return redirect(url_for("auth.login"))
 
     return wrapped_view

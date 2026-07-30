@@ -82,6 +82,14 @@ def load_logged_in_user() -> None:
         )
         g.user = None
         return
+    except Exception:
+        # Invalid/orphaned sessions or unexpected ORM state must never 500.
+        current_app.logger.exception("Unexpected session load failure for %s", user_pk)
+        clear_invalid_session(
+            "Your session could not be loaded. Please sign in again."
+        )
+        g.user = None
+        return
     if g.user is None or g.user.is_active is False:
         clear_invalid_session(
             "Your session expired or the account is no longer available. "
@@ -125,6 +133,12 @@ def trainer_required(view):
             current_app.logger.exception("Trainer profile lookup failed")
             recover_from_db_error()
             return redirect(url_for("auth.login"))
+        except Exception:
+            current_app.logger.exception("Unexpected trainer guard failure")
+            clear_invalid_session(
+                "Your trainer session could not be verified. Please sign in again."
+            )
+            return redirect(url_for("auth.login"))
         if role != "trainer":
             flash("That page is only available to trainers.", "warning")
             return _dashboard_redirect()
@@ -150,6 +164,12 @@ def member_required(view):
         except SQLAlchemyError:
             current_app.logger.exception("Member profile lookup failed")
             recover_from_db_error()
+            return redirect(url_for("auth.login"))
+        except Exception:
+            current_app.logger.exception("Unexpected member guard failure")
+            clear_invalid_session(
+                "Your member session could not be verified. Please sign in again."
+            )
             return redirect(url_for("auth.login"))
         if role != "member":
             flash("That page is only available to members.", "warning")

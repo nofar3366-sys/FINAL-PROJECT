@@ -37,8 +37,17 @@ WEEK_DAYS = (
 @member_bp.get("/dashboard")
 @member_required
 def dashboard():
-    member = g.user.member
+    from controllers.auth import clear_invalid_session
+
     try:
+        member = g.user.member
+        if member is None:
+            clear_invalid_session(
+                "Your member profile is missing. Please sign in again."
+            )
+            return redirect(url_for("auth.login"))
+        # Touch names early so missing columns fail here, not in Jinja.
+        _ = member.full_name
         upcoming_bookings = db.session.scalars(
             select(Booking)
             .join(Booking.workout_session)
@@ -57,16 +66,22 @@ def dashboard():
                 Booking.credit_refunded.is_(False),
             )
         )
+        return render_template(
+            "dashboard.html",
+            member=member,
+            upcoming_bookings=upcoming_bookings,
+            used_credits=int(used_credits or 0),
+        )
     except SQLAlchemyError:
         current_app.logger.exception("Member dashboard query failed")
         recover_from_db_error()
         return redirect(url_for("auth.login"))
-    return render_template(
-        "dashboard.html",
-        member=member,
-        upcoming_bookings=upcoming_bookings,
-        used_credits=int(used_credits or 0),
-    )
+    except Exception:
+        current_app.logger.exception("Member dashboard unexpected failure")
+        clear_invalid_session(
+            "Your session could not load the member dashboard. Please sign in again."
+        )
+        return redirect(url_for("auth.login"))
 
 
 @member_bp.get("/schedule")

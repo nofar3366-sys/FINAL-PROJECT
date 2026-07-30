@@ -20,8 +20,12 @@ class Member(db.Model):
         nullable=False,
         unique=True,
     )
-    first_name = db.Column(db.String(80), nullable=False)
-    last_name = db.Column(db.String(80), nullable=False)
+    first_name = db.Column(
+        db.String(80), nullable=False, default="", server_default=""
+    )
+    last_name = db.Column(
+        db.String(80), nullable=False, default="", server_default=""
+    )
     phone = db.Column(db.String(30))
     membership_expires_on = db.Column(db.Date, nullable=False)
     credit_balance = db.Column(db.Integer, nullable=False, default=0)

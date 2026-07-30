@@ -1,7 +1,5 @@
-import json
 import os
 import tempfile
-import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
@@ -10,36 +8,6 @@ from dotenv import load_dotenv
 
 
 load_dotenv()
-
-# #region agent log
-_DEBUG_LOG = Path(__file__).resolve().parent.parent / "debug-17ef2f.log"
-
-
-def _agent_log(
-    location: str,
-    message: str,
-    data: dict | None = None,
-    *,
-    hypothesis_id: str = "A",
-    run_id: str = "pre-fix",
-) -> None:
-    try:
-        payload = {
-            "sessionId": "17ef2f",
-            "timestamp": int(time.time() * 1000),
-            "location": location,
-            "message": message,
-            "hypothesisId": hypothesis_id,
-            "data": data or {},
-            "runId": run_id,
-        }
-        with _DEBUG_LOG.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(payload) + "\n")
-    except Exception:
-        pass
-
-
-# #endregion
 
 
 def is_vercel_runtime() -> bool:
@@ -184,29 +152,14 @@ def probe_database_uri(database_uri: str, timeout_seconds: float = 3.0) -> bool:
     # Hard wall-clock cap — connect_timeout alone does not bound DNS ENOTFOUND.
     # Important: shutdown(wait=False) so a hung DNS thread cannot block return.
     wall = max(0.5, float(timeout_seconds))
-    started = time.time()
     pool = ThreadPoolExecutor(max_workers=1)
     try:
         future = pool.submit(_probe)
-        ok = bool(future.result(timeout=wall))
+        return bool(future.result(timeout=wall))
     except (FuturesTimeout, Exception):
-        ok = False
+        return False
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
-    # #region agent log
-    _agent_log(
-        "config.py:probe_database_uri",
-        "probe_finished",
-        {
-            "ok": ok,
-            "elapsed_s": round(time.time() - started, 3),
-            "wall_s": wall,
-            "is_vercel": is_vercel_runtime(),
-        },
-        hypothesis_id="E",
-    )
-    # #endregion
-    return ok
 
 
 def resolve_runtime_database_uri(instance_path: str | Path | None = None) -> tuple[str, str]:
@@ -226,66 +179,20 @@ def resolve_runtime_database_uri(instance_path: str | Path | None = None) -> tup
         "true",
         "yes",
     } or os.environ.get("USE_SQLITE", "").lower() in {"1", "true", "yes"}
-    use_postgres = os.environ.get("USE_POSTGRES", "").lower() in {
-        "1",
-        "true",
-        "yes",
-    }
-    on_vercel = is_vercel_runtime()
 
-    # Vercel: never probe Postgres. USE_POSTGRES cannot override this while the
-    # configured Supabase tenant is invalid / DNS-hanging.
-    if force_sqlite or on_vercel:
-        uri = sqlite_fallback_uri(instance_path)
-        # #region agent log
-        _agent_log(
-            "config.py:resolve_runtime_database_uri",
-            "sqlite_forced",
-            {
-                "on_vercel": on_vercel,
-                "force_sqlite": force_sqlite,
-                "use_postgres_ignored": use_postgres if on_vercel else False,
-                "source": "sqlite-forced",
-            },
-            hypothesis_id="A",
-        )
-        # #endregion
-        return uri, "sqlite-forced"
+    # Vercel: never probe Postgres while the configured Supabase tenant can
+    # DNS-hang and kill serverless cold starts.
+    if force_sqlite or is_vercel_runtime():
+        return sqlite_fallback_uri(instance_path), "sqlite-forced"
 
     configured = resolve_database_uri(instance_path)
     if configured.startswith("sqlite"):
-        # #region agent log
-        _agent_log(
-            "config.py:resolve_runtime_database_uri",
-            "native_sqlite",
-            {"source": "sqlite"},
-            hypothesis_id="B",
-        )
-        # #endregion
         return configured, "sqlite"
 
-    probe_timeout = 1.5
-    if probe_database_uri(configured, timeout_seconds=probe_timeout):
-        # #region agent log
-        _agent_log(
-            "config.py:resolve_runtime_database_uri",
-            "postgres_ok",
-            {"source": "postgres"},
-            hypothesis_id="E",
-        )
-        # #endregion
+    if probe_database_uri(configured, timeout_seconds=1.5):
         return configured, "postgres"
 
-    uri = sqlite_fallback_uri(instance_path)
-    # #region agent log
-    _agent_log(
-        "config.py:resolve_runtime_database_uri",
-        "sqlite_fallback",
-        {"source": "sqlite-fallback", "use_postgres": use_postgres},
-        hypothesis_id="E",
-    )
-    # #endregion
-    return uri, "sqlite-fallback"
+    return sqlite_fallback_uri(instance_path), "sqlite-fallback"
 
 
 class Config:
