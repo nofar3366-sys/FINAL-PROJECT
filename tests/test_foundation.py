@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from models import Booking, Member, Trainer, User, WorkoutSession, db
 from models.seed import seed_demo_data
 from services.ai_service import GroqAIService, LightweightRetriever
-from services.cloud_service import CloudService
+
 
 def test_schema_and_health_endpoint(app):
     assert db.engine.dialect.name in {"sqlite", "postgresql"}
@@ -23,9 +23,19 @@ def test_schema_and_health_endpoint(app):
         "audit_logs",
     }.issubset(inspector.get_table_names())
 
+    member_columns = {column["name"] for column in inspector.get_columns("members")}
+    trainer_columns = {column["name"] for column in inspector.get_columns("trainers")}
+    assert {"first_name", "last_name"}.issubset(member_columns)
+    assert {"first_name", "last_name"}.issubset(trainer_columns)
+    assert "full_name" not in member_columns
+    assert "full_name" not in trainer_columns
+
     response = app.test_client().get("/health")
     assert response.status_code == 200
-    assert response.get_json()["database"] == "ok"
+    payload = response.get_json()
+    assert payload["database"] == "ok"
+    assert "cloud_service" not in payload
+    assert "cloudinary" not in str(payload).lower()
 
 
 def test_all_page_templates_extend_base(app):
@@ -49,11 +59,19 @@ def test_demo_seed_covers_required_states(app):
     assert db.session.scalar(select(func.count(Member.id))) == 4
 
     members = db.session.scalars(select(Member)).all()
+    assert all(member.first_name and member.last_name for member in members)
+    assert any(member.full_name == "Alice Active" for member in members)
     assert any(member.credit_balance == 0 for member in members)
     assert any(
         member.membership_expires_on < date.today() for member in members
     )
     assert any(member.status == "inactive" for member in members)
+
+    trainers = db.session.scalars(select(Trainer)).all()
+    assert any(
+        trainer.first_name == "Maya" and trainer.last_name == "Cohen"
+        for trainer in trainers
+    )
 
     sessions = db.session.scalars(select(WorkoutSession)).all()
     assert any(session.status == "cancelled" for session in sessions)
@@ -64,16 +82,7 @@ def test_demo_seed_covers_required_states(app):
         seed_demo_data()
 
 
-def test_optional_services_are_safe_by_default(app, tmp_path):
-    cloud = CloudService(simulation_directory=tmp_path / "cloud")
-    result = cloud.health_check()
-    assert result.status == "simulated"
-    backup = cloud.backup_database(db.engine.url.database)
-    assert backup.status == "simulated"
-    assert backup.reference.startswith("cloud-sim-")
-    assert Path(backup.readable_artifact_path).is_file()
-    assert (tmp_path / "cloud").exists()
-
+def test_optional_services_are_safe_by_default(app):
     matches = LightweightRetriever().retrieve("Can I book with no credits?")
     assert matches
     assert matches[0].key == "booking-policy"
@@ -87,32 +96,3 @@ def test_optional_services_are_safe_by_default(app, tmp_path):
     assert command["trainer_name"] == "Maya Cohen"
     assert command["title"] == "Pilates"
     assert command["max_capacity"] == 15
-
-
-def test_cloudinary_backup_uploads_raw_asset(app, tmp_path, monkeypatch):
-    seed_demo_data()
-    captured = []
-
-    def fake_upload(self, snapshot, public_id):
-        captured.append((snapshot, public_id))
-        return {
-            "secure_url": f"https://res.cloudinary.com/demo/raw/upload/{public_id}",
-            "public_id": f"fitness_studio_backups/{public_id}",
-        }
-
-    monkeypatch.setattr(CloudService, "_cloudinary_upload", fake_upload)
-    cloud = CloudService(
-        cloudinary_url="cloudinary://key:secret@demo",
-        simulation_directory=tmp_path / "cloudinary",
-    )
-    result = cloud.backup_database(db.engine.url.database)
-
-    assert result.status == "uploaded"
-    assert result.secure_url.startswith("https://res.cloudinary.com/")
-    assert result.readable_url.endswith(".html")
-    assert [snapshot.suffix for snapshot, _ in captured] == [".db", ".html"]
-    assert captured[0][1].endswith(".db")
-    assert captured[1][1].endswith(".html")
-    html_report = Path(result.readable_artifact_path).read_text(encoding="utf-8")
-    assert "Alice Active" in html_report
-    assert "[REDACTED]" in html_report

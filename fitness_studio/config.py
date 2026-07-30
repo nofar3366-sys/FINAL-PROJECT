@@ -158,9 +158,3 @@ class Config:
     RECEIPT_FROM_EMAIL = os.environ.get(
         "RECEIPT_FROM_EMAIL", "Fitness Studio <onboarding@resend.dev>"
     )
-
-    CLOUD_SERVICE_ENABLED = (
-        os.environ.get("CLOUD_SERVICE_ENABLED", "false").lower() == "true"
-    )
-    CLOUD_SERVICE_PROVIDER = os.environ.get("CLOUD_SERVICE_PROVIDER", "cloudinary")
-    CLOUDINARY_URL = os.environ.get("CLOUDINARY_URL", "")

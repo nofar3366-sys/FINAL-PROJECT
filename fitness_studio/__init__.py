@@ -17,7 +17,6 @@ from controllers.trainer import trainer_bp
 from models import db
 from models.seed import ensure_demo_data, seed_demo_command
 from services.ai_service import GroqAIService
-from services.cloud_service import CloudService
 from services.email_service import ReceiptEmailService
 from services.membership_service import ensure_default_plans
 from services.schema_service import upgrade_trainer_accounts
@@ -89,9 +88,6 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.cli.add_command(upgrade_db_command)
 
     app.extensions["ai_service"] = GroqAIService.from_config(app.config)
-    app.extensions["cloud_service"] = CloudService.from_config(
-        app.config, Path(app.instance_path) / "cloud_backups"
-    )
     app.extensions["receipt_email"] = ReceiptEmailService(
         app.config["RESEND_API_KEY"], app.config["RECEIPT_FROM_EMAIL"]
     )

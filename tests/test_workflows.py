@@ -14,7 +14,6 @@ from models import (
 )
 from models.seed import seed_demo_data
 from services.booking_service import BookingError, book_session, cancel_booking
-from services.cloud_service import CloudService
 from skills.availability import get_class_availability_skill
 from skills.scheduling import schedule_class_skill, schedule_recurring_sessions_skill
 
@@ -100,11 +99,8 @@ def test_demo_purchase_renews_membership_and_logs_receipt(app):
     assert purchase.receipt_status == "mocked"
 
 
-def test_manager_schedule_report_subscription_and_ai_skill(app, tmp_path):
+def test_manager_schedule_report_subscription_and_ai_skill(app):
     seed_demo_data()
-    app.extensions["cloud_service"] = CloudService(
-        simulation_directory=tmp_path / "cloud"
-    )
     client = app.test_client()
     _login(client, "manager@fitness.local")
 

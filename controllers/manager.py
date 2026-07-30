@@ -74,11 +74,18 @@ def dashboard():
 @manager_required
 def members():
     search = request.args.get("q", "").strip()
-    query = select(Member).join(Member.user).order_by(Member.full_name)
+    query = select(Member).join(Member.user).order_by(
+        Member.first_name, Member.last_name
+    )
     if search:
         term = f"%{search}%"
         query = query.where(
-            or_(Member.full_name.ilike(term), User.email.ilike(term))
+            or_(
+                Member.first_name.ilike(term),
+                Member.last_name.ilike(term),
+                func.concat(Member.first_name, " ", Member.last_name).ilike(term),
+                User.email.ilike(term),
+            )
         )
     return render_template(
         "members.html", members=db.session.scalars(query).all(), search=search
@@ -102,7 +109,8 @@ def new_member():
             user.set_password(values["password"])
             member = Member(
                 user=user,
-                full_name=values["full_name"],
+                first_name=values["first_name"],
+                last_name=values["last_name"],
                 phone=values["phone"],
                 membership_expires_on=values["expiry"],
                 credit_balance=values["credits"],
@@ -151,7 +159,8 @@ def edit_member(member_id: int):
         else:
             member.user.email = values["email"]
             member.user.is_active = values["is_active"]
-            member.full_name = values["full_name"]
+            member.first_name = values["first_name"]
+            member.last_name = values["last_name"]
             member.phone = values["phone"]
             member.membership_expires_on = values["expiry"]
             member.credit_balance = values["credits"]
@@ -191,11 +200,16 @@ def activate_member(member_id: int):
 @manager_required
 def trainers():
     search = request.args.get("q", "").strip()
-    query = select(Trainer).order_by(Trainer.full_name)
+    query = select(Trainer).order_by(Trainer.first_name, Trainer.last_name)
     if search:
         term = f"%{search}%"
         query = query.where(
-            or_(Trainer.full_name.ilike(term), Trainer.specialty.ilike(term))
+            or_(
+                Trainer.first_name.ilike(term),
+                Trainer.last_name.ilike(term),
+                func.concat(Trainer.first_name, " ", Trainer.last_name).ilike(term),
+                Trainer.specialty.ilike(term),
+            )
         )
     return render_template(
         "trainers.html", trainers=db.session.scalars(query).all(), search=search
@@ -311,7 +325,7 @@ def sessions():
     trainers = db.session.scalars(
         select(Trainer)
         .where(Trainer.is_active.is_(True))
-        .order_by(Trainer.full_name)
+        .order_by(Trainer.first_name, Trainer.last_name)
     ).all()
     return render_template(
         "sessions.html", sessions=workout_sessions, trainers=trainers
@@ -324,7 +338,7 @@ def new_session():
     trainers = db.session.scalars(
         select(Trainer)
         .where(Trainer.is_active.is_(True))
-        .order_by(Trainer.full_name)
+        .order_by(Trainer.first_name, Trainer.last_name)
     ).all()
     if request.method == "POST":
         validate_csrf()
@@ -365,9 +379,10 @@ def cancel_workout_session(session_id: int):
 def ai_schedule():
     validate_csrf()
     prompt = request.form.get("prompt", "").strip()
-    trainer_names = db.session.scalars(
-        select(Trainer.full_name).where(Trainer.is_active.is_(True))
+    trainers = db.session.scalars(
+        select(Trainer).where(Trainer.is_active.is_(True))
     ).all()
+    trainer_names = [trainer.full_name for trainer in trainers]
     try:
         parsed = current_app.extensions["ai_service"].parse_schedule_command(
             prompt, trainer_names
@@ -395,7 +410,9 @@ def ai_schedule():
 @manager_bp.get("/subscriptions")
 @manager_required
 def subscriptions():
-    members = db.session.scalars(select(Member).order_by(Member.full_name)).all()
+    members = db.session.scalars(
+        select(Member).order_by(Member.first_name, Member.last_name)
+    ).all()
     return render_template("subscriptions.html", members=members)
 
 
@@ -468,7 +485,8 @@ def reports_csv():
 
 def _member_form_values(require_password: bool):
     email = User.normalize_email(request.form.get("email", ""))
-    full_name = request.form.get("full_name", "").strip()
+    first_name = request.form.get("first_name", "").strip()
+    last_name = request.form.get("last_name", "").strip()
     phone = request.form.get("phone", "").strip() or None
     password = request.form.get("password", "")
     status = request.form.get("status", "active")
@@ -479,8 +497,10 @@ def _member_form_values(require_password: bool):
         return {}, "Enter a valid expiry date and credit balance."
 
     error = None
-    if not full_name:
-        error = "Full name is required."
+    if not first_name:
+        error = "First name is required."
+    elif not last_name:
+        error = "Last name is required."
     elif "@" not in email:
         error = "Enter a valid email address."
     elif require_password and len(password) < 6:
@@ -492,7 +512,8 @@ def _member_form_values(require_password: bool):
 
     return {
         "email": email,
-        "full_name": full_name,
+        "first_name": first_name,
+        "last_name": last_name,
         "phone": phone,
         "password": password,
         "expiry": expiry,
@@ -503,7 +524,8 @@ def _member_form_values(require_password: bool):
 
 
 def _trainer_form_values(require_password: bool = False):
-    full_name = request.form.get("full_name", "").strip()
+    first_name = request.form.get("first_name", "").strip()
+    last_name = request.form.get("last_name", "").strip()
     specialty = request.form.get("specialty", "").strip()
     email = User.normalize_email(request.form.get("email", ""))
     phone = request.form.get("phone", "").strip() or None
@@ -511,8 +533,10 @@ def _trainer_form_values(require_password: bool = False):
     password = request.form.get("password", "")
 
     error = None
-    if not full_name:
-        error = "Trainer name is required."
+    if not first_name:
+        error = "First name is required."
+    elif not last_name:
+        error = "Last name is required."
     elif not specialty:
         error = "Specialty is required."
     elif "@" not in email:
@@ -523,7 +547,8 @@ def _trainer_form_values(require_password: bool = False):
         error = "Trainer login password must contain at least 6 characters."
 
     return {
-        "full_name": full_name,
+        "first_name": first_name,
+        "last_name": last_name,
         "specialty": specialty,
         "email": email,
         "phone": phone,

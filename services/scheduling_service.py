@@ -1,6 +1,6 @@
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from models import Trainer, WorkoutSession, db
 from models.time_utils import combine_utc, ensure_utc, utc_now
@@ -106,9 +106,10 @@ def create_recurring_sessions(
     if max_capacity <= 0 or duration_minutes <= 0:
         raise SchedulingError("Capacity and duration must be positive.")
 
+    name_term = f"%{trainer_name.strip()}%"
     trainers = db.session.scalars(
         select(Trainer).where(
-            Trainer.full_name.ilike(f"%{trainer_name.strip()}%"),
+            func.concat(Trainer.first_name, " ", Trainer.last_name).ilike(name_term),
             Trainer.is_active.is_(True),
         )
     ).all()

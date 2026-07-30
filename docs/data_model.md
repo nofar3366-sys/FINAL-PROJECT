@@ -22,7 +22,8 @@ erDiagram
     MEMBERS {
         integer id PK
         integer user_id FK
-        text full_name
+        text first_name
+        text last_name
         text phone
         text membership_expires_on
         integer credit_balance
@@ -32,7 +33,8 @@ erDiagram
     }
     TRAINERS {
         integer id PK
-        text full_name
+        text first_name
+        text last_name
         text specialty
         text phone
         text email
@@ -85,17 +87,19 @@ erDiagram
 ## Table constraints
 ### users
 - `email` uses normalized lowercase values and is unique.
-- `role IN ('manager', 'member')`.
-- `is_active IN (0, 1)`.
+- `role IN ('manager', 'member', 'trainer')`.
+- `is_active` is a boolean.
 
 ### members
 - `user_id` is unique and required for member login.
+- `first_name` and `last_name` are required atomic name attributes (1NF). Display `full_name` is computed in the ORM, not stored.
 - `credit_balance >= 0`.
 - `status IN ('active', 'inactive')`.
 - Membership validity is derived from status and expiry rather than storing a second potentially inconsistent boolean.
 
 ### trainers
-- `is_active IN (0, 1)`.
+- `first_name` and `last_name` are required atomic name attributes (1NF).
+- `is_active` is a boolean.
 - Deactivation is preferred once referenced by a session.
 
 ### workout_sessions

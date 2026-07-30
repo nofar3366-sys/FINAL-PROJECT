@@ -81,7 +81,8 @@ def seed_demo_data() -> None:
 
     alice = Member(
         user=alice_user,
-        full_name="Alice Active",
+        first_name="Alice",
+        last_name="Active",
         phone="050-555-0101",
         membership_expires_on=today + timedelta(days=120),
         credit_balance=7,
@@ -89,7 +90,8 @@ def seed_demo_data() -> None:
     )
     ben = Member(
         user=ben_user,
-        full_name="Ben Zero Credit",
+        first_name="Ben",
+        last_name="Zero Credit",
         phone="050-555-0102",
         membership_expires_on=today + timedelta(days=60),
         credit_balance=0,
@@ -97,7 +99,8 @@ def seed_demo_data() -> None:
     )
     cara = Member(
         user=cara_user,
-        full_name="Cara Expired",
+        first_name="Cara",
+        last_name="Expired",
         phone="050-555-0103",
         membership_expires_on=today - timedelta(days=10),
         credit_balance=4,
@@ -105,7 +108,8 @@ def seed_demo_data() -> None:
     )
     dan = Member(
         user=dan_user,
-        full_name="Dan Inactive",
+        first_name="Dan",
+        last_name="Inactive",
         phone="050-555-0104",
         membership_expires_on=today + timedelta(days=90),
         credit_balance=5,
@@ -114,21 +118,24 @@ def seed_demo_data() -> None:
 
     yoga = Trainer(
         user=_new_user("maya@fitness.local", role="trainer"),
-        full_name="Maya Cohen",
+        first_name="Maya",
+        last_name="Cohen",
         specialty="Yoga and Mobility",
         email="maya@fitness.local",
         phone="050-555-0201",
     )
     strength = Trainer(
         user=_new_user("noam@fitness.local", role="trainer"),
-        full_name="Noam Levi",
+        first_name="Noam",
+        last_name="Levi",
         specialty="Strength Training",
         email="noam@fitness.local",
         phone="050-555-0202",
     )
     cardio = Trainer(
         user=_new_user("rina@fitness.local", role="trainer"),
-        full_name="Rina Azulay",
+        first_name="Rina",
+        last_name="Azulay",
         specialty="Cardio and HIIT",
         email="rina@fitness.local",
         phone="050-555-0203",

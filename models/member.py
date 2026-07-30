@@ -20,7 +20,8 @@ class Member(db.Model):
         nullable=False,
         unique=True,
     )
-    full_name = db.Column(db.String(150), nullable=False)
+    first_name = db.Column(db.String(80), nullable=False)
+    last_name = db.Column(db.String(80), nullable=False)
     phone = db.Column(db.String(30))
     membership_expires_on = db.Column(db.Date, nullable=False)
     credit_balance = db.Column(db.Integer, nullable=False, default=0)
@@ -48,6 +49,10 @@ class Member(db.Model):
         uselist=False,
         cascade="all, delete-orphan",
     )
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.first_name} {self.last_name}".strip()
 
     def has_active_membership(self, on_date: date | None = None) -> bool:
         effective_date = on_date or date.today()

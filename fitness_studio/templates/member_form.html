@@ -9,11 +9,15 @@
                 <form method="post">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label" for="full_name">Full name</label>
-                            <input class="form-control" id="full_name" name="full_name" value="{{ request.form.get('full_name', member.full_name if member else '') }}" required>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label" for="first_name">First name</label>
+                            <input class="form-control" id="first_name" name="first_name" value="{{ request.form.get('first_name', member.first_name if member else '') }}" required>
                         </div>
-                        <div class="col-md-6 mb-3">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label" for="last_name">Last name</label>
+                            <input class="form-control" id="last_name" name="last_name" value="{{ request.form.get('last_name', member.last_name if member else '') }}" required>
+                        </div>
+                        <div class="col-md-4 mb-3">
                             <label class="form-label" for="email">Email</label>
                             <input class="form-control" id="email" name="email" type="email" value="{{ request.form.get('email', member.user.email if member else '') }}" required>
                         </div>

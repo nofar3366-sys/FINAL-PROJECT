@@ -56,7 +56,8 @@ def test_public_registration_creates_zero_credit_member(app):
     response = client.post(
         "/auth/register",
         data={
-            "full_name": "New Member",
+            "first_name": "New",
+            "last_name": "Member",
             "email": "new@example.com",
             "phone": "050-111-2222",
             "password": "secret7",
@@ -70,6 +71,9 @@ def test_public_registration_creates_zero_credit_member(app):
         select(Member).join(Member.user).where(User.email == "new@example.com")
     )
     assert member is not None
+    assert member.first_name == "New"
+    assert member.last_name == "Member"
+    assert member.full_name == "New Member"
     assert member.credit_balance == 0
     assert member.membership_expires_on == date.today()
     assert member.user.check_password("secret7")
@@ -84,7 +88,8 @@ def test_manager_can_create_member_and_trainer(app):
     response = client.post(
         "/manager/members/new",
         data={
-            "full_name": "Managed Member",
+            "first_name": "Managed",
+            "last_name": "Member",
             "email": "managed@example.com",
             "phone": "",
             "password": "secret8",
@@ -95,14 +100,18 @@ def test_manager_can_create_member_and_trainer(app):
         follow_redirects=True,
     )
     assert b"Member created" in response.data
-    assert db.session.scalar(
-        select(User).where(User.email == "managed@example.com")
+    managed = db.session.scalar(
+        select(Member).join(Member.user).where(User.email == "managed@example.com")
     )
+    assert managed is not None
+    assert managed.first_name == "Managed"
+    assert managed.last_name == "Member"
 
     response = client.post(
         "/manager/trainers/new",
         data={
-            "full_name": "Test Trainer",
+            "first_name": "Test",
+            "last_name": "Trainer",
             "specialty": "Pilates",
             "email": "trainer@example.com",
             "phone": "",
@@ -112,9 +121,13 @@ def test_manager_can_create_member_and_trainer(app):
         follow_redirects=True,
     )
     assert b"Trainer created" in response.data
-    assert db.session.scalar(
+    trainer = db.session.scalar(
         select(Trainer).where(Trainer.email == "trainer@example.com")
     )
+    assert trainer is not None
+    assert trainer.first_name == "Test"
+    assert trainer.last_name == "Trainer"
+    assert trainer.full_name == "Test Trainer"
     trainer_user = db.session.scalar(
         select(User).where(User.email == "trainer@example.com")
     )

@@ -32,14 +32,10 @@ def health():
         "database": "ok" if database_ok else "unavailable",
         "database_engine": db.engine.dialect.name if database_ok else "unavailable",
         "groq": "configured" if current_app.config["GROQ_API_KEY"] else "mock-fallback",
-        "cloud_service": (
-            "cloudinary-configured"
-            if current_app.config["CLOUDINARY_URL"].startswith("cloudinary://")
-            else (
-                "invalid-configuration"
-                if current_app.config["CLOUDINARY_URL"]
-                else "offline-simulation"
-            )
+        "email": (
+            "resend-configured"
+            if current_app.config["RESEND_API_KEY"]
+            else "mock-fallback"
         ),
     }
     return jsonify(payload), 200 if database_ok else 503

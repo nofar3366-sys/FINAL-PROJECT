@@ -155,14 +155,17 @@ def register():
     if request.method == "POST":
         validate_csrf()
         email = User.normalize_email(request.form.get("email", ""))
-        full_name = request.form.get("full_name", "").strip()
+        first_name = request.form.get("first_name", "").strip()
+        last_name = request.form.get("last_name", "").strip()
         phone = request.form.get("phone", "").strip()
         password = request.form.get("password", "")
         confirm_password = request.form.get("confirm_password", "")
 
         error = None
-        if not full_name:
-            error = "Full name is required."
+        if not first_name:
+            error = "First name is required."
+        elif not last_name:
+            error = "Last name is required."
         elif "@" not in email:
             error = "Enter a valid email address."
         elif len(password) < 6:
@@ -181,7 +184,8 @@ def register():
             user.set_password(password)
             member = Member(
                 user=user,
-                full_name=full_name,
+                first_name=first_name,
+                last_name=last_name,
                 phone=phone or None,
                 membership_expires_on=date.today(),
                 credit_balance=0,

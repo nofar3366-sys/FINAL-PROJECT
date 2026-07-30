@@ -12,7 +12,7 @@ Academic final project for a web information-systems course. The application man
   - Business/integration services: [`services/`](services/)
 - Application factory: [`fitness_studio/__init__.py`](fitness_studio/__init__.py)
 
-SQLite remains the default local database when `DATABASE_URL` is unset. For production and Vercel, set `DATABASE_URL` to your Supabase **Transaction pooler** URI (port **6543**), not the direct `5432` connection. Groq, Resend, and Cloudinary are optional integrations and do not replace the relational database.
+SQLite remains the default local database when `DATABASE_URL` is unset. For production and Vercel, set `DATABASE_URL` to your Supabase **Transaction pooler** URI (port **6543**), not the direct `5432` connection. Groq and Resend are optional integrations and do not replace the relational database.
 
 ## User Roles
 ### Manager
@@ -63,7 +63,7 @@ The database separates independent subjects into dedicated tables:
 - `membership_purchases`, `membership_renewals`, and `membership_subscriptions` store separate transaction/history/current-status facts.
 - `audit_logs` stores manager/system actions.
 
-Every non-key attribute describes its table's key; plan, trainer, user, and session attributes are referenced through foreign keys rather than duplicated. Repeating groups are absent, foreign keys are enabled on every SQLite connection, and derived values such as remaining capacity are calculated from normalized records.
+Every non-key attribute describes its table's key; plan, trainer, user, and session attributes are referenced through foreign keys rather than duplicated. Names are stored as atomic `first_name` and `last_name` columns (1NF); `full_name` is a derived Python property only. Foreign keys are enabled on every SQLite connection, and derived values such as remaining capacity are calculated from normalized records.
 
 ## Three Bonus Items
 ### Bonus 1: RAG AI Assistant
@@ -71,8 +71,8 @@ Every non-key attribute describes its table's key; plan, trainer, user, and sess
 
 The member interface is available at `/member/assistant`. It includes a personalized Workout Recommendation Agent that combines the member's status/history/goal with bookable classes from SQLite. Manager natural-language scheduling uses the same provider with a local parsing fallback.
 
-### Bonus 2: Cloud Backup Integration
-[`services/cloud_service.py`](services/cloud_service.py) creates a consistent snapshot with SQLite's online backup API and uploads both the raw `.db` asset and a styled, password-sanitized HTML table report under `fitness_studio_backups/`. The manager dashboard displays the real public ID plus links for the raw database and **View Live Database Tables in Cloud**. If `CLOUDINARY_URL` is absent, the same action uses a clearly labelled offline simulation under `instance/cloud_backups/`.
+### Bonus 2: Cloud Database (Supabase DBaaS)
+Production persistence uses **PostgreSQL on Supabase** via `DATABASE_URL` (Transaction pooler, port 6543). The Flask app on Vercel is the application tier; Supabase is the managed data tier. Local pytest continues to use ephemeral SQLite.
 
 ### Bonus 3: Explicit AI Skills
 The allow-listed tools are defined in [`skills/`](skills/) and registered in [`skills/registry.py`](skills/registry.py):
@@ -99,7 +99,7 @@ Optional environment variables:
 ```powershell
 $env:GROQ_API_KEY = "your-key"
 $env:RESEND_API_KEY = "your-key"
-$env:CLOUDINARY_URL = "cloudinary://api-key:api-secret@cloud-name"
+$env:DATABASE_URL = "postgresql://postgres.YOUR_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres?sslmode=require"
 ```
 
 ## Verification

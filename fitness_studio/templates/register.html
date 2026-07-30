@@ -9,10 +9,17 @@
                 <p class="text-secondary">New accounts begin with zero credits. A manager can renew your membership.</p>
                 <form method="post">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="mb-3">
-                        <label class="form-label" for="full_name">Full name</label>
-                        <input class="form-control" id="full_name" name="full_name"
-                               value="{{ request.form.get('full_name', '') }}" required>
+                    <div class="row">
+                        <div class="col-sm-6 mb-3">
+                            <label class="form-label" for="first_name">First name</label>
+                            <input class="form-control" id="first_name" name="first_name"
+                                   value="{{ request.form.get('first_name', '') }}" required>
+                        </div>
+                        <div class="col-sm-6 mb-3">
+                            <label class="form-label" for="last_name">Last name</label>
+                            <input class="form-control" id="last_name" name="last_name"
+                                   value="{{ request.form.get('last_name', '') }}" required>
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label" for="email">Email</label>
