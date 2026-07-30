@@ -204,10 +204,12 @@ class Config:
     """Base application configuration."""
 
     SECRET_KEY = os.environ.get("SECRET_KEY", "development-only-change-me")
-    # Placeholder; create_app() overwrites with a probed runtime URI.
-    SQLALCHEMY_DATABASE_URI = resolve_database_uri()
+    # Placeholder only — create_app() always overwrites with a runtime URI.
+    # Do not call resolve_database_uri() here: class-body evaluation runs on
+    # import and can pull a bad DATABASE_URL before Vercel overrides apply.
+    SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ENGINE_OPTIONS = sqlalchemy_engine_options(SQLALCHEMY_DATABASE_URI)
+    SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
     CSRF_ENABLED = True
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"

@@ -1,20 +1,12 @@
-"""Local Flask CLI / debug entry.
+"""Local-only helpers. Do NOT expose a module-level Flask ``app`` here.
 
-Vercel must use only ``app.py`` as the WSGI entrypoint. Keeping a second
-module-level ``app`` in ``main.py`` can make modern Vercel builds fail when
-both ``app.py`` and ``main.py`` are detected as Python entry files.
-
-Use:
-  flask --app app run --debug
-  flask --app app init-db
+Vercel must use ``app.py`` exclusively (see ``pyproject.toml`` tool.vercel.entrypoint).
 """
 
 from fitness_studio import create_app
 
 
 def create_flask_app():
-    """Factory for tooling that prefers an explicit callable."""
-
     return create_app()
 
 
