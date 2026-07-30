@@ -1,7 +1,9 @@
 """Vercel / local WSGI entrypoint.
 
-Vercel’s Flask detector requires a top-level ``app = Flask(...)`` assignment.
-We create that first, then replace it with the real application factory result.
+Vercel requires a top-level ``app = Flask(...)``.
+On Vercel we keep that shell app for detection/import, and lazy-load the full
+MVC application on the first request. That prevents import-time crashes from
+showing up as FUNCTION_INVOCATION_FAILED with no handler.
 """
 
 from __future__ import annotations
@@ -10,70 +12,96 @@ import logging
 import os
 import traceback
 
-from flask import Flask
+from flask import Flask, jsonify
 
 logger = logging.getLogger("app_entry")
 
-# --- Must run BEFORE importing fitness_studio ---
 _ON_VERCEL = os.environ.get("VERCEL") == "1" or bool(os.environ.get("VERCEL_ENV"))
 if _ON_VERCEL:
     os.environ["FORCE_SQLITE"] = "1"
-    os.environ["USE_POSTGRES"] = "0"
     os.environ["USE_SQLITE"] = "1"
+    os.environ["USE_POSTGRES"] = "0"
     os.environ.pop("DATABASE_URL", None)
     os.environ.pop("SUPABASE_DB_PASSWORD", None)
+    os.environ.pop("SUPABASE_PROJECT_REF", None)
 
-# Required by Vercel Flask detection (literal top-level Flask instance).
+# Literal Flask instance — required by Vercel detector.
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
 
+_REAL_APP: Flask | None = None
+_LOAD_ERROR = ""
+_LOAD_ATTEMPTED = False
 
-def _build_recovery_app(error: BaseException | None = None) -> Flask:
-    from flask import jsonify
 
-    recovery = Flask(__name__)
-    recovery.secret_key = os.environ.get("SECRET_KEY", "recovery-mode-only")
-    detail = (
-        "".join(traceback.format_exception_only(type(error), error)).strip()
-        if error
-        else ""
+@app.get("/health")
+def shell_health():
+    return jsonify(
+        {
+            "status": "ok" if not _LOAD_ERROR else "degraded",
+            "mode": "full" if _REAL_APP is not None else "shell",
+            "vercel": _ON_VERCEL,
+            "git_sha": (os.environ.get("VERCEL_GIT_COMMIT_SHA") or "")[:7] or None,
+            "load_error": _LOAD_ERROR[:400] if _LOAD_ERROR else None,
+        }
+    ), (200 if not _LOAD_ERROR else 503)
+
+
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def shell_home(path: str = ""):
+    return (
+        "<h1>Fitness Studio</h1>"
+        "<p>Entry shell is online.</p>"
+        f"<p>Full app loaded: {_REAL_APP is not None}</p>"
+        f"<pre>{_LOAD_ERROR}</pre>"
+        "<p><a href='/health'>/health</a></p>",
+        200,
     )
 
-    @recovery.get("/health")
-    def health():
-        return (
-            jsonify(
-                {
-                    "status": "degraded",
-                    "database": "unavailable",
-                    "mode": "recovery",
-                    "error": detail[:300],
-                }
-            ),
-            503,
-        )
 
-    @recovery.route("/", defaults={"path": ""})
-    @recovery.route("/<path:path>")
-    def any_path(path: str):
-        return (
-            "<h1>Fitness Studio</h1>"
-            "<p>Recovery mode (startup error).</p>"
-            f"<pre>{detail}</pre>"
-            "<p><a href='/health'>/health</a></p>",
-            503,
-        )
+def _load_real_app() -> Flask | None:
+    global _REAL_APP, _LOAD_ERROR, _LOAD_ATTEMPTED
+    if _REAL_APP is not None:
+        return _REAL_APP
+    if _LOAD_ATTEMPTED and _LOAD_ERROR:
+        return None
+    _LOAD_ATTEMPTED = True
+    try:
+        from fitness_studio import create_app
 
-    return recovery
+        _REAL_APP = create_app()
+        _LOAD_ERROR = ""
+        logger.info("Full Fitness Studio app loaded successfully")
+        return _REAL_APP
+    except Exception as exc:  # noqa: BLE001
+        _LOAD_ERROR = "".join(
+            traceback.format_exception_only(type(exc), exc)
+        ).strip()
+        logger.exception("Failed to load full app")
+        return None
 
 
-try:
-    from fitness_studio import create_app
+_SHELL_WSGI = app.wsgi_app
 
-    app = create_app()
-except Exception as exc:  # noqa: BLE001 — must always expose a WSGI app
-    logger.exception("create_app failed; using recovery app")
-    app = _build_recovery_app(exc)
+
+def _dispatch(environ, start_response):
+    """Prefer the full MVC app; fall back to the shell Flask app."""
+
+    real = _load_real_app()
+    if real is not None:
+        return real(environ, start_response)
+    return _SHELL_WSGI(environ, start_response)
+
+
+if _ON_VERCEL:
+    # Lazy: import/create_app runs on first request, not during module import.
+    app.wsgi_app = _dispatch
+else:
+    # Local/dev: load the full app immediately (CLI + flask run expect it).
+    loaded = _load_real_app()
+    if loaded is not None:
+        app = loaded
 
 
 if __name__ == "__main__":

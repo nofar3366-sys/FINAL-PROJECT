@@ -144,10 +144,21 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.cli.add_command(upgrade_db_command)
     _register_error_handlers(app)
 
-    app.extensions["ai_service"] = GroqAIService.from_config(app.config)
-    app.extensions["receipt_email"] = ReceiptEmailService(
-        app.config["RESEND_API_KEY"], app.config["RECEIPT_FROM_EMAIL"]
-    )
+    try:
+        app.extensions["ai_service"] = GroqAIService.from_config(app.config)
+    except Exception:
+        app.logger.exception("AI service init failed")
+        app.extensions["ai_service"] = GroqAIService.from_config(
+            {"GROQ_API_KEY": "", "GROQ_MODEL": "", "GROQ_TIMEOUT_SECONDS": 1}
+        )
+    try:
+        app.extensions["receipt_email"] = ReceiptEmailService(
+            app.config.get("RESEND_API_KEY", ""),
+            app.config.get("RECEIPT_FROM_EMAIL", "Fitness Studio <onboarding@resend.dev>"),
+        )
+    except Exception:
+        app.logger.exception("Email service init failed")
+        app.extensions["receipt_email"] = ReceiptEmailService("", "noreply@localhost")
 
     if test_config is None and not is_vercel_runtime():
         with app.app_context():
