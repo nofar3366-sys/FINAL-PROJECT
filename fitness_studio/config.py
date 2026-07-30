@@ -28,7 +28,7 @@ def build_supabase_pooler_url(
     project_ref: str,
     password: str,
     *,
-    region: str = "eu-central-1",
+    region: str = "ap-northeast-1",
     pooler_host: str | None = None,
 ) -> str:
     """Build a Supabase Transaction pooler URI (port 6543) for SQLAlchemy.
@@ -104,7 +104,7 @@ def resolve_database_uri() -> str:
         built = build_supabase_pooler_url(
             project_ref,
             password,
-            region=os.environ.get("SUPABASE_REGION", "eu-central-1"),
+            region=os.environ.get("SUPABASE_REGION", "ap-northeast-1"),
             pooler_host=os.environ.get("SUPABASE_POOLER_HOST") or None,
         )
         return normalize_database_url(built)
