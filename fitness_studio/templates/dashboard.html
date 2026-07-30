@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Dashboard | Fitness Studio{% endblock %}
 {% block content %}
-{% if g.user.role == 'manager' %}
+{% if g.user.normalized_role == 'manager' %}
     <div class="dashboard-hero mb-4">
         <div>
             <span class="eyebrow">STUDIO OPERATIONS</span>
@@ -10,26 +10,8 @@
         </div>
         <div class="d-flex flex-wrap gap-2">
             <a class="btn btn-warning fw-semibold" href="{{ url_for('manager.reports_csv') }}">Download CSV Report</a>
-            <form method="post" action="{{ url_for('manager.cloud_backup') }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button class="btn btn-outline-light fw-semibold" type="submit">Backup DB to Cloud</button>
-            </form>
         </div>
     </div>
-    {% if cloud_status %}
-        <div class="cloud-confirmation mb-4">
-            <span class="status-pill status-available">Cloud {{ cloud_status|title }}</span>
-            <div><strong>Backup confirmation</strong><small>{{ cloud_reference }}</small></div>
-            <div class="d-flex flex-wrap gap-2 ms-auto">
-                {% if cloud_url %}
-                    <a class="btn btn-sm btn-outline-success" href="{{ cloud_url }}" target="_blank" rel="noopener noreferrer">View Raw DB File</a>
-                {% endif %}
-                {% if cloud_snapshot_url %}
-                    <a class="btn btn-sm btn-success" href="{{ cloud_snapshot_url }}" target="_blank" rel="noopener noreferrer">View Live Database Tables in Cloud</a>
-                {% endif %}
-            </div>
-        </div>
-    {% endif %}
     <div class="row g-3 mb-4">
         <div class="col-sm-6 col-lg"><div class="card stat-card"><div class="card-body"><span class="text-secondary">Members</span><div class="display-6">{{ counts.members }}</div></div></div></div>
         <div class="col-sm-6 col-lg"><div class="card stat-card"><div class="card-body"><span class="text-secondary">Trainers</span><div class="display-6">{{ counts.trainers }}</div></div></div></div>

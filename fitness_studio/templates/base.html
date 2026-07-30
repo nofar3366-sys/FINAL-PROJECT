@@ -18,13 +18,13 @@
             </button>
             <div class="collapse navbar-collapse" id="mainNav">
                 <ul class="navbar-nav me-auto">
-                    {% if g.user.role == 'manager' %}
+                    {% if g.user.normalized_role == 'manager' %}
                         <li class="nav-item"><a class="nav-link {% if request.endpoint == 'manager.dashboard' %}active{% endif %}" href="{{ url_for('manager.dashboard') }}">Dashboard</a></li>
                         <li class="nav-item"><a class="nav-link {% if request.endpoint and 'member' in request.endpoint %}active{% endif %}" href="{{ url_for('manager.members') }}">Members</a></li>
                         <li class="nav-item"><a class="nav-link {% if request.endpoint and 'trainer' in request.endpoint %}active{% endif %}" href="{{ url_for('manager.trainers') }}">Trainers</a></li>
                         <li class="nav-item"><a class="nav-link {% if request.endpoint and 'session' in request.endpoint %}active{% endif %}" href="{{ url_for('manager.sessions') }}">Sessions</a></li>
                         <li class="nav-item"><a class="nav-link {% if request.endpoint == 'manager.subscriptions' %}active{% endif %}" href="{{ url_for('manager.subscriptions') }}">Subscriptions</a></li>
-                    {% elif g.user.role == 'trainer' %}
+                    {% elif g.user.normalized_role == 'trainer' %}
                         <li class="nav-item"><a class="nav-link {% if request.endpoint == 'trainer.dashboard' %}active{% endif %}" href="{{ url_for('trainer.dashboard') }}">My Schedule</a></li>
                         <li class="nav-item"><a class="nav-link {% if request.endpoint == 'trainer.new_session' %}active{% endif %}" href="{{ url_for('trainer.new_session') }}">Add Workout</a></li>
                     {% else %}

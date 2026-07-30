@@ -26,7 +26,7 @@
                             <td><span class="badge text-bg-{{ 'success' if workout.status == 'scheduled' else 'secondary' }}">{{ workout.status|title }}</span></td>
                             <td>
                                 <a class="btn btn-sm btn-outline-primary" href="{{ url_for('trainer.participants', session_id=workout.id) }}">Participants</a>
-                                {% if workout.status == 'scheduled' and workout.starts_at > now %}
+                                {% if workout.status == 'scheduled' and workout.is_upcoming %}
                                     <form class="d-inline" method="post" action="{{ url_for('trainer.cancel_workout_session', session_id=workout.id) }}">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <button class="btn btn-sm btn-outline-danger" type="submit">Cancel slot</button>

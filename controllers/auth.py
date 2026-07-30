@@ -15,8 +15,8 @@ from flask import (
     session,
     url_for,
 )
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from models import Member, User, db
 
@@ -49,7 +49,24 @@ def inject_csrf_token():
 @auth_bp.before_app_request
 def load_logged_in_user() -> None:
     user_id = session.get("user_id")
-    g.user = db.session.get(User, user_id) if user_id else None
+    g.user = None
+    if user_id is None:
+        return
+    try:
+        user_pk = int(user_id)
+    except (TypeError, ValueError):
+        session.pop("user_id", None)
+        return
+    try:
+        g.user = db.session.get(User, user_pk)
+    except SQLAlchemyError:
+        # Keep the session identity; a transient DB blip should not log the user out.
+        current_app.logger.exception("Failed to load session user %s", user_pk)
+        g.user = None
+        return
+    if g.user is None or g.user.is_active is False:
+        session.pop("user_id", None)
+        g.user = None
 
 
 def login_required(view):
@@ -66,7 +83,7 @@ def manager_required(view):
     @wraps(view)
     @login_required
     def wrapped_view(*args, **kwargs):
-        if g.user.role != "manager":
+        if g.user.normalized_role != "manager":
             abort(403)
         return view(*args, **kwargs)
 
@@ -77,7 +94,7 @@ def trainer_required(view):
     @wraps(view)
     @login_required
     def wrapped_view(*args, **kwargs):
-        if g.user.role != "trainer" or g.user.trainer is None:
+        if g.user.normalized_role != "trainer" or g.user.trainer is None:
             abort(403)
         return view(*args, **kwargs)
 
@@ -93,13 +110,37 @@ def login():
         validate_csrf()
         email = User.normalize_email(request.form.get("email", ""))
         password = request.form.get("password", "")
-        user = db.session.scalar(select(User).where(User.email == email))
+        user = None
+        try:
+            user = db.session.scalar(
+                select(User).where(func.lower(User.email) == email)
+            )
+        except SQLAlchemyError:
+            current_app.logger.exception("Login lookup failed for %s", email)
+            flash(
+                "Unable to reach the database. Please try again in a moment.",
+                "danger",
+            )
+            return render_template("login.html")
 
-        if user is None or not user.is_active or not user.check_password(password):
+        active = user is not None and user.is_active is not False
+        if user is None or not active or not user.check_password(password):
             flash("Invalid email or password.", "danger")
         else:
+            if user.needs_password_rehash():
+                try:
+                    user.set_password(password)
+                    if user.role != user.normalized_role:
+                        user.role = user.normalized_role
+                    db.session.commit()
+                except SQLAlchemyError:
+                    db.session.rollback()
+                    current_app.logger.exception(
+                        "Password rehash failed for user %s", user.id
+                    )
             session.clear()
-            session["user_id"] = user.id
+            session["user_id"] = int(user.id)
+            session.permanent = True
             flash("Welcome back.", "success")
             return _dashboard_redirect(user)
 
@@ -128,7 +169,9 @@ def register():
             error = "Password must contain at least 6 characters."
         elif password != confirm_password:
             error = "Passwords do not match."
-        elif db.session.scalar(select(User.id).where(User.email == email)):
+        elif db.session.scalar(
+            select(User.id).where(func.lower(User.email) == email)
+        ):
             error = "An account with this email already exists."
 
         if error:
@@ -176,5 +219,6 @@ def _dashboard_redirect(user=None):
         "trainer": "trainer.dashboard",
         "member": "member.dashboard",
     }
-    endpoint = endpoints[current_user.role]
+    role = current_user.normalized_role
+    endpoint = endpoints.get(role, "member.dashboard")
     return redirect(url_for(endpoint))

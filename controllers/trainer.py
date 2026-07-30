@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from controllers.auth import trainer_required, validate_csrf
 from models import Booking, WorkoutSession, db
+from models.time_utils import ensure_utc, utc_now
 from services.scheduling_service import SchedulingError, cancel_session, create_session
 
 
@@ -23,7 +24,6 @@ def dashboard():
         "trainer_dashboard.html",
         trainer=g.user.trainer,
         sessions=sessions,
-        now=datetime.now(),
     )
 
 
@@ -36,7 +36,9 @@ def new_session():
             create_session(
                 trainer_id=g.user.trainer.id,
                 title=request.form.get("title", ""),
-                starts_at=datetime.fromisoformat(request.form.get("starts_at", "")),
+                starts_at=ensure_utc(
+                    datetime.fromisoformat(request.form.get("starts_at", ""))
+                ),
                 duration_minutes=int(request.form.get("duration_minutes", "60")),
                 max_capacity=int(request.form.get("max_capacity", "0")),
             )
@@ -50,7 +52,7 @@ def new_session():
     return render_template(
         "trainer_session_form.html",
         trainer=g.user.trainer,
-        suggested_start=(datetime.now() + timedelta(days=1))
+        suggested_start=(utc_now() + timedelta(days=1))
         .replace(minute=0, second=0, microsecond=0)
         .isoformat(timespec="minutes"),
     )

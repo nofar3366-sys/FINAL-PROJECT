@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from models import Trainer, db
+from models.time_utils import ensure_utc
 from services.scheduling_service import create_recurring_sessions, create_session
 
 
@@ -18,7 +19,7 @@ def schedule_class_skill(
     if trainer is None:
         raise ValueError("Trainer was not found.")
     try:
-        starts_at = datetime.fromisoformat(date_time)
+        starts_at = ensure_utc(datetime.fromisoformat(date_time))
     except ValueError as exc:
         raise ValueError("Date/time must use ISO format.") from exc
 

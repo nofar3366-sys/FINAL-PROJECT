@@ -1,9 +1,10 @@
 from datetime import date as date_type
-from datetime import datetime, time, timedelta
+from datetime import time, timedelta
 
 from sqlalchemy import func, select
 
 from models import Booking, Trainer, WorkoutSession, db
+from models.time_utils import combine_utc
 
 
 def get_class_availability_skill(
@@ -23,7 +24,7 @@ def get_class_availability_skill(
     if not specialty:
         raise ValueError("Specialty is required.")
 
-    day_start = datetime.combine(requested_date, time.min)
+    day_start = combine_utc(requested_date, time.min)
     day_end = day_start + timedelta(days=1)
     sessions = db.session.scalars(
         select(WorkoutSession)

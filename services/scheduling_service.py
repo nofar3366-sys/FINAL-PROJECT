@@ -3,6 +3,7 @@ from datetime import date, datetime, time, timedelta
 from sqlalchemy import select
 
 from models import Trainer, WorkoutSession, db
+from models.time_utils import combine_utc, ensure_utc, utc_now
 from services.db_transactions import begin_write_transaction
 
 
@@ -20,7 +21,8 @@ def create_session(
 ) -> WorkoutSession:
     if not title.strip():
         raise SchedulingError("Session title is required.")
-    if starts_at <= datetime.now():
+    starts_at = ensure_utc(starts_at)
+    if starts_at <= utc_now():
         raise SchedulingError("Session must start in the future.")
     if duration_minutes <= 0 or max_capacity <= 0:
         raise SchedulingError("Duration and capacity must be positive.")
@@ -55,7 +57,7 @@ def cancel_session(workout_session_id: int) -> None:
             raise SchedulingError("Session was not found.")
         if workout_session.status != "scheduled":
             raise SchedulingError("Only scheduled sessions can be cancelled.")
-        if workout_session.starts_at <= datetime.now():
+        if ensure_utc(workout_session.starts_at) <= utc_now():
             raise SchedulingError("Started sessions cannot be cancelled.")
 
         workout_session.status = "cancelled"
@@ -63,7 +65,7 @@ def cancel_session(workout_session_id: int) -> None:
             if booking.status != "booked":
                 continue
             booking.status = "cancelled"
-            booking.cancelled_at = datetime.now()
+            booking.cancelled_at = utc_now()
             if booking.credit_consumed and not booking.credit_refunded:
                 booking.member.credit_balance += 1
                 booking.credit_refunded = True
@@ -116,8 +118,8 @@ def create_recurring_sessions(
 
     today = date.today()
     days_ahead = (weekday_number - today.weekday()) % 7
-    first_start = datetime.combine(today + timedelta(days=days_ahead), parsed_time)
-    if first_start <= datetime.now():
+    first_start = combine_utc(today + timedelta(days=days_ahead), parsed_time)
+    if first_start <= utc_now():
         first_start += timedelta(days=7)
 
     starts = [first_start + timedelta(weeks=index) for index in range(occurrences)]
@@ -143,6 +145,7 @@ def create_recurring_sessions(
 def _check_trainer_conflict(
     trainer_id: int, starts_at: datetime, duration_minutes: int
 ) -> None:
+    starts_at = ensure_utc(starts_at)
     proposed_end = starts_at + timedelta(minutes=duration_minutes)
     existing_sessions = db.session.scalars(
         select(WorkoutSession).where(
@@ -151,7 +154,9 @@ def _check_trainer_conflict(
         )
     ).all()
     for existing in existing_sessions:
-        if starts_at < existing.ends_at and proposed_end > existing.starts_at:
+        existing_start = ensure_utc(existing.starts_at)
+        existing_end = ensure_utc(existing.ends_at)
+        if starts_at < existing_end and proposed_end > existing_start:
             raise SchedulingError(
-                f"Trainer already has a session at {existing.starts_at:%Y-%m-%d %H:%M}."
+                f"Trainer already has a session at {existing_start:%Y-%m-%d %H:%M}."
             )

@@ -11,9 +11,9 @@ core_bp = Blueprint("core", __name__)
 def index():
     if g.user is None:
         return redirect(url_for("auth.login"))
-    if g.user.role == "manager":
+    if g.user.normalized_role == "manager":
         return redirect(url_for("manager.dashboard"))
-    if g.user.role == "trainer":
+    if g.user.normalized_role == "trainer":
         return redirect(url_for("trainer.dashboard"))
     return redirect(url_for("member.dashboard"))
 

@@ -150,10 +150,6 @@ def test_manager_schedule_report_subscription_and_ai_skill(app, tmp_path):
     assert report.mimetype == "text/csv"
     assert b"Attendance and Capacity" in report.data
 
-    backup = client.post("/manager/cloud-backup", follow_redirects=True)
-    assert b"Backup confirmation" in backup.data
-    assert b"cloud-sim-" in backup.data
-
 
 def test_explicit_ai_skills_query_and_create_sessions(app):
     seed_demo_data()

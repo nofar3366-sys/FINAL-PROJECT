@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from flask import (
     Blueprint,
@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 
 from controllers.auth import login_required, validate_csrf
 from models import Booking, MembershipPlan, MembershipPurchase, WorkoutSession, db
+from models.time_utils import utc_now
 from services.ai_service import AIServiceError, KnowledgeDocument
 from services.booking_service import BookingError, book_session, cancel_booking
 from services.membership_service import MembershipPurchaseError, purchase_membership
@@ -42,7 +43,7 @@ def dashboard():
         .where(
             Booking.member_id == member.id,
             Booking.status == "booked",
-            WorkoutSession.starts_at > datetime.now(),
+            WorkoutSession.starts_at > utc_now(),
         )
         .order_by(WorkoutSession.starts_at)
     ).all()
@@ -188,7 +189,7 @@ def assistant():
     sessions = db.session.scalars(
         select(WorkoutSession)
         .where(
-            WorkoutSession.starts_at > datetime.now(),
+            WorkoutSession.starts_at > utc_now(),
         )
         .order_by(WorkoutSession.starts_at)
         .limit(12)
@@ -261,7 +262,7 @@ def assistant_recommendation():
         select(WorkoutSession)
         .where(
             WorkoutSession.status == "scheduled",
-            WorkoutSession.starts_at > datetime.now(),
+            WorkoutSession.starts_at > utc_now(),
         )
         .order_by(WorkoutSession.starts_at)
         .limit(20)
@@ -306,7 +307,7 @@ def assistant_recommendation():
 
 
 def _current_member():
-    if g.user.role != "member" or g.user.member is None:
+    if g.user.normalized_role != "member" or g.user.member is None:
         abort(403)
     return g.user.member
 
@@ -316,7 +317,7 @@ def _schedule_data(member_id: int):
         select(WorkoutSession)
         .where(
             WorkoutSession.status == "scheduled",
-            WorkoutSession.starts_at > datetime.now(),
+            WorkoutSession.starts_at > utc_now(),
         )
         .order_by(WorkoutSession.starts_at)
     ).all()

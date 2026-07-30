@@ -146,6 +146,9 @@ class Config:
     CSRF_ENABLED = True
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
+    PERMANENT_SESSION_LIFETIME = 60 * 60 * 24 * 7
+    # Secure cookies on Vercel HTTPS so browsers retain the Flask session.
+    SESSION_COOKIE_SECURE = is_vercel_runtime()
 
     GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
     GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")

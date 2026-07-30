@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 from .db import db
-from .user import utc_now
+from .time_utils import ensure_utc, utc_now
 
 
 class WorkoutSession(db.Model):
@@ -40,7 +40,13 @@ class WorkoutSession(db.Model):
 
     @property
     def ends_at(self) -> datetime:
-        return self.starts_at + timedelta(minutes=self.duration_minutes)
+        return ensure_utc(self.starts_at) + timedelta(minutes=self.duration_minutes)
+
+    @property
+    def is_upcoming(self) -> bool:
+        """True when the session starts in the future (tz-safe)."""
+
+        return ensure_utc(self.starts_at) > utc_now()
 
     @property
     def active_booking_count(self) -> int:

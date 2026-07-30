@@ -5,6 +5,7 @@ import click
 from flask import Flask
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 # Register every model on db.Model.metadata before create_all().
 import models  # noqa: F401
@@ -72,6 +73,10 @@ def create_app(test_config: dict | None = None) -> Flask:
         app.config.update(test_config)
         uri = app.config.get("SQLALCHEMY_DATABASE_URI", "")
         app.config["SQLALCHEMY_ENGINE_OPTIONS"] = sqlalchemy_engine_options(str(uri))
+
+    # Vercel terminates TLS at the edge; trust X-Forwarded-* for cookies/URLs.
+    if is_vercel_runtime():
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
     db.init_app(app)
     app.register_blueprint(core_bp)

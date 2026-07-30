@@ -1,8 +1,9 @@
-from datetime import date, datetime
+from datetime import date
 
 from sqlalchemy import func, select
 
 from models import Booking, Member, WorkoutSession, db
+from models.time_utils import ensure_utc, utc_now
 from services.db_transactions import begin_write_transaction
 
 
@@ -27,7 +28,7 @@ def book_session(member_id: int, workout_session_id: int) -> None:
             raise BookingError("You do not have enough credits.")
         if workout_session.status != "scheduled":
             raise BookingError("This session is not available.")
-        if workout_session.starts_at <= datetime.now():
+        if ensure_utc(workout_session.starts_at) <= utc_now():
             raise BookingError("This session has already started.")
 
         existing = db.session.scalar(
@@ -74,11 +75,11 @@ def cancel_booking(member_id: int, booking_id: int) -> None:
             raise BookingError("Booking was not found.")
         if booking.status != "booked":
             raise BookingError("This booking is already cancelled.")
-        if booking.workout_session.starts_at <= datetime.now():
+        if ensure_utc(booking.workout_session.starts_at) <= utc_now():
             raise BookingError("Started sessions cannot be cancelled.")
 
         booking.status = "cancelled"
-        booking.cancelled_at = datetime.now()
+        booking.cancelled_at = utc_now()
         if booking.credit_consumed and not booking.credit_refunded:
             booking.member.credit_balance += 1
             booking.credit_refunded = True

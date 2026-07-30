@@ -25,8 +25,8 @@ from models import (
     WorkoutSession,
     db,
 )
+from models.time_utils import ensure_utc
 from services.ai_service import AIServiceError
-from services.cloud_service import CloudUploadError
 from services.membership_service import (
     MembershipPurchaseError,
     set_subscription_status,
@@ -67,10 +67,6 @@ def dashboard():
         counts=counts,
         members=members,
         trainers=trainers,
-        cloud_status=request.args.get("cloud_status"),
-        cloud_reference=request.args.get("cloud_reference"),
-        cloud_url=request.args.get("cloud_url"),
-        cloud_snapshot_url=request.args.get("cloud_snapshot_url"),
     )
 
 
@@ -336,7 +332,9 @@ def new_session():
             create_session(
                 trainer_id=int(request.form.get("trainer_id", "0")),
                 title=request.form.get("title", ""),
-                starts_at=datetime.fromisoformat(request.form.get("starts_at", "")),
+                starts_at=ensure_utc(
+                    datetime.fromisoformat(request.form.get("starts_at", ""))
+                ),
                 duration_minutes=int(request.form.get("duration_minutes", "60")),
                 max_capacity=int(request.form.get("max_capacity", "0")),
             )
@@ -412,32 +410,6 @@ def update_subscription(member_id: int, status: str):
     else:
         flash(f"Subscription marked {status}.", "success")
     return redirect(url_for("manager.subscriptions"))
-
-
-@manager_bp.post("/cloud-backup")
-@manager_required
-def cloud_backup():
-    validate_csrf()
-    try:
-        cloud = current_app.extensions["cloud_service"]
-        if db.engine.dialect.name == "sqlite":
-            result = cloud.backup_database(db.engine.url.database)
-        else:
-            result = cloud.backup_sqlalchemy_database(db.engine)
-    except (CloudUploadError, FileNotFoundError, OSError, ValueError) as exc:
-        flash(f"Cloud backup failed: {exc}", "danger")
-        return redirect(url_for("manager.dashboard"))
-
-    flash(result.message, "success")
-    return redirect(
-        url_for(
-            "manager.dashboard",
-            cloud_status=result.status,
-            cloud_reference=result.reference,
-            cloud_url=result.secure_url,
-            cloud_snapshot_url=result.readable_url,
-        )
-    )
 
 
 @manager_bp.get("/reports.csv")
