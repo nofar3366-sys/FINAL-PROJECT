@@ -1,4 +1,5 @@
 import os
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from dotenv import load_dotenv
 
@@ -12,8 +13,24 @@ def is_vercel_runtime() -> bool:
     return os.environ.get("VERCEL") == "1" or bool(os.environ.get("VERCEL_ENV"))
 
 
+def _is_supabase_pooler_url(url: str) -> bool:
+    """Detect Supabase transaction/session pooler endpoints (PgBouncer)."""
+
+    lowered = url.lower()
+    return (
+        ":6543" in lowered
+        or "pooler.supabase.com" in lowered
+        or "pgbouncer=true" in lowered
+    )
+
+
 def normalize_database_url(url: str) -> str:
-    """Normalize Supabase/Heroku-style URLs for SQLAlchemy + psycopg2."""
+    """Normalize Supabase/Heroku-style URLs for SQLAlchemy + psycopg (v3).
+
+    - Rewrites legacy postgres:// to postgresql+psycopg://
+    - Ensures sslmode=require for cloud Postgres / pooler URLs
+    - Accepts direct (5432) and transaction pooler (6543) hosts
+    """
 
     value = url.strip()
     if not value:
@@ -21,12 +38,24 @@ def normalize_database_url(url: str) -> str:
 
     if value.startswith("postgres://"):
         value = "postgresql://" + value[len("postgres://") :]
-    if value.startswith("postgresql://"):
-        value = "postgresql+psycopg2://" + value[len("postgresql://") :]
 
-    if "sslmode=" not in value and value.startswith("postgresql"):
-        separator = "&" if "?" in value else "?"
-        value = f"{value}{separator}sslmode=require"
+    # Prefer psycopg3 so we can disable prepared statements for PgBouncer.
+    if value.startswith("postgresql+psycopg2://"):
+        value = "postgresql+psycopg://" + value[len("postgresql+psycopg2://") :]
+    elif value.startswith("postgresql://"):
+        value = "postgresql+psycopg://" + value[len("postgresql://") :]
+
+    if not value.startswith("postgresql"):
+        return value
+
+    parsed = urlparse(value)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query.setdefault("sslmode", "require")
+    if _is_supabase_pooler_url(value):
+        # Helps some tooling identify transaction-pooler usage.
+        query.setdefault("pgbouncer", "true")
+
+    value = urlunparse(parsed._replace(query=urlencode(query)))
     return value
 
 
@@ -40,24 +69,36 @@ def resolve_database_uri() -> str:
 
 
 def sqlalchemy_engine_options(database_uri: str) -> dict:
-    options = {"pool_pre_ping": True}
+    """Build SQLAlchemy engine options for local SQLite or serverless Postgres."""
+
+    options: dict = {"pool_pre_ping": True}
     if database_uri.startswith("sqlite"):
         options["connect_args"] = {"timeout": 10}
-    else:
-        # NullPool avoids sticky connections across Vercel serverless invocations.
-        from sqlalchemy.pool import NullPool
+        return options
 
-        options["poolclass"] = NullPool
-        options["connect_args"] = {"connect_timeout": 10}
+    # NullPool avoids sticky connections across Vercel serverless invocations.
+    from sqlalchemy.pool import NullPool
+
+    connect_args: dict = {"connect_timeout": 10}
+    # Critical for Supabase transaction pooler (PgBouncer on :6543):
+    # disable server-side prepared statements (psycopg3).
+    if _is_supabase_pooler_url(database_uri) or ":6543" in database_uri:
+        connect_args["prepare_threshold"] = None
+    else:
+        # Safe default for serverless Postgres even on direct connections.
+        connect_args["prepare_threshold"] = None
+
+    options["poolclass"] = NullPool
+    options["connect_args"] = connect_args
     return options
 
 
 class Config:
     """Base application configuration.
 
-    Production and Vercel should set DATABASE_URL to the Supabase PostgreSQL
-    connection string. Local development falls back to instance SQLite when
-    DATABASE_URL is unset.
+    Production and Vercel should set DATABASE_URL to the Supabase
+    **Transaction pooler** URI (port 6543). Local development falls back to
+    instance SQLite when DATABASE_URL is unset.
     """
 
     SECRET_KEY = os.environ.get("SECRET_KEY", "development-only-change-me")
