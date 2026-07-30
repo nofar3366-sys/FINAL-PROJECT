@@ -184,22 +184,17 @@ def resolve_runtime_database_uri(instance_path: str | Path | None = None) -> tup
         "true",
         "yes",
     } or os.environ.get("USE_SQLITE", "").lower() in {"1", "true", "yes"}
-    use_postgres = os.environ.get("USE_POSTGRES", "").lower() in {
-        "1",
-        "true",
-        "yes",
-    }
 
-    # Default: never touch remote Postgres during Vercel cold start.
-    if force_sqlite or (is_vercel_runtime() and not use_postgres):
+    # Vercel: ALWAYS SQLite. Remote Supabase during cold start causes
+    # FUNCTION_INVOCATION_FAILED (~30s). Local/dev may still use DATABASE_URL.
+    if force_sqlite or is_vercel_runtime():
         return sqlite_fallback_uri(instance_path), "sqlite-forced"
 
     configured = resolve_database_uri(instance_path)
     if configured.startswith("sqlite"):
         return configured, "sqlite"
 
-    probe_timeout = 1.5 if is_vercel_runtime() else 3.0
-    if probe_database_uri(configured, timeout_seconds=probe_timeout):
+    if probe_database_uri(configured, timeout_seconds=3.0):
         return configured, "postgres"
 
     return sqlite_fallback_uri(instance_path), "sqlite-fallback"
