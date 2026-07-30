@@ -1,5 +1,0 @@
-A server error has occurred
-
-FUNCTION_INVOCATION_FAILED
-
-fra1::949bh-1785449103734-fe63a58ea265
