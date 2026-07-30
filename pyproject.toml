@@ -1,0 +1,9 @@
+[project]
+name = "fitness-studio"
+version = "1.0.0"
+description = "Academic fitness studio management system (Flask MVC)"
+requires-python = ">=3.12"
+
+[tool.vercel]
+# Single WSGI entry — avoids ambiguous detection of both app.py and main.py
+entrypoint = "app:app"

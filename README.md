@@ -88,12 +88,14 @@ Set `RESEND_API_KEY` to send real purchase receipts through Resend. Without a ke
 ## Setup and Run
 ```powershell
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
-.\venv\Scripts\python.exe -m flask --app main init-db
-.\venv\Scripts\python.exe -m flask --app main seed-demo
-.\venv\Scripts\python.exe -m flask --app main run --debug
+.\venv\Scripts\python.exe -m flask --app app init-db
+.\venv\Scripts\python.exe -m flask --app app seed-demo
+.\venv\Scripts\python.exe -m flask --app app run --debug
 ```
 
-For a database created before trainer login support, run `flask --app main upgrade-db` once instead of deleting existing data.
+For a database created before trainer login support, run `flask --app app upgrade-db` once instead of deleting existing data.
+
+Vercel deploys ``app.py`` (not ``main.py``) as the single WSGI entrypoint.
 
 Optional environment variables:
 ```powershell
