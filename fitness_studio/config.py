@@ -20,7 +20,7 @@ def build_supabase_pooler_url(
     project_ref: str,
     password: str,
     *,
-    region: str = "ap-northeast-1",
+    region: str = "eu-west-2",
     pooler_host: str | None = None,
 ) -> str:
     """Build a Supabase Transaction pooler URI (port 6543) for SQLAlchemy."""
@@ -30,6 +30,7 @@ def build_supabase_pooler_url(
     if not ref or not raw_password:
         return ""
 
+    # Prefer explicit host; otherwise aws-0-<region>. Some new projects land on aws-1.
     host = (pooler_host or "").strip() or f"aws-0-{region.strip()}.pooler.supabase.com"
     encoded_password = quote(raw_password, safe="")
     user = f"postgres.{ref}"
@@ -169,9 +170,9 @@ def resolve_runtime_database_uri(instance_path: str | Path | None = None) -> tup
     ``sqlite-forced``, or ``sqlite``. If configured Postgres is unreachable, fall
     back to SQLite so the academic demo still boots on Vercel.
 
-    On Vercel, SQLite is always used (no Postgres probe). Dead Supabase DNS can
-    hang ~6s even with connect_timeout=1, which kills serverless cold starts.
-    Set ``FORCE_SQLITE=1`` / ``USE_SQLITE=1`` locally to skip Postgres entirely.
+    Set ``FORCE_SQLITE=1`` / ``USE_SQLITE=1`` to skip Postgres entirely.
+    On Vercel, Postgres is probed with a hard wall-clock timeout; a dead tenant
+    falls back to SQLite instead of hanging the cold start.
     """
 
     force_sqlite = os.environ.get("FORCE_SQLITE", "").lower() in {
@@ -179,17 +180,16 @@ def resolve_runtime_database_uri(instance_path: str | Path | None = None) -> tup
         "true",
         "yes",
     } or os.environ.get("USE_SQLITE", "").lower() in {"1", "true", "yes"}
-
-    # Vercel: never probe Postgres while the configured Supabase tenant can
-    # DNS-hang and kill serverless cold starts.
-    if force_sqlite or is_vercel_runtime():
+    if force_sqlite:
         return sqlite_fallback_uri(instance_path), "sqlite-forced"
 
     configured = resolve_database_uri(instance_path)
     if configured.startswith("sqlite"):
         return configured, "sqlite"
 
-    if probe_database_uri(configured, timeout_seconds=1.5):
+    # Fail fast on Vercel; local can wait a bit longer for first pooler connect.
+    probe_timeout = 1.5 if is_vercel_runtime() else 3.0
+    if probe_database_uri(configured, timeout_seconds=probe_timeout):
         return configured, "postgres"
 
     return sqlite_fallback_uri(instance_path), "sqlite-fallback"
