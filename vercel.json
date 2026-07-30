@@ -1,9 +1,3 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "functions": {
-    "app.py": {
-      "maxDuration": 60,
-      "excludeFiles": "{tests/**,docs/**,skills/**,.cursor/**,venv/**,.venv/**,**/__pycache__/**,final2026.pdf,**/*.md}"
-    }
-  }
+  "$schema": "https://openapi.vercel.sh/vercel.json"
 }
