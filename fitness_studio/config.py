@@ -167,12 +167,16 @@ def resolve_runtime_database_uri(instance_path: str | Path | None = None) -> tup
     """Choose a working DB URI.
 
     Returns ``(uri, source)`` where source is ``postgres``, ``sqlite-fallback``,
-    ``sqlite-forced``, or ``sqlite``. If configured Postgres is unreachable, fall
-    back to SQLite so the academic demo still boots on Vercel.
+    ``sqlite-forced``, or ``sqlite``.
 
-    Set ``FORCE_SQLITE=1`` / ``USE_SQLITE=1`` to skip Postgres entirely.
-    On Vercel, Postgres is probed with a hard wall-clock timeout; a dead tenant
-    falls back to SQLite instead of hanging the cold start.
+    Vercel serverless cold starts must stay under a few seconds. Probing or
+    bootstrapping Supabase from ``create_app()`` regularly takes 20–40s and
+    causes ``FUNCTION_INVOCATION_FAILED``. Therefore Vercel always uses a
+    writable SQLite DB under ``/tmp``. Local/dev can still use Supabase via
+    ``DATABASE_URL``.
+
+    Set ``FORCE_SQLITE=1`` locally to skip Postgres. Set ``USE_POSTGRES=1`` on
+    Vercel only if you accept slower cold starts against a live pooler.
     """
 
     force_sqlite = os.environ.get("FORCE_SQLITE", "").lower() in {
@@ -180,14 +184,20 @@ def resolve_runtime_database_uri(instance_path: str | Path | None = None) -> tup
         "true",
         "yes",
     } or os.environ.get("USE_SQLITE", "").lower() in {"1", "true", "yes"}
-    if force_sqlite:
+    use_postgres = os.environ.get("USE_POSTGRES", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+    # Default: never touch remote Postgres during Vercel cold start.
+    if force_sqlite or (is_vercel_runtime() and not use_postgres):
         return sqlite_fallback_uri(instance_path), "sqlite-forced"
 
     configured = resolve_database_uri(instance_path)
     if configured.startswith("sqlite"):
         return configured, "sqlite"
 
-    # Fail fast on Vercel; local can wait a bit longer for first pooler connect.
     probe_timeout = 1.5 if is_vercel_runtime() else 3.0
     if probe_database_uri(configured, timeout_seconds=probe_timeout):
         return configured, "postgres"
