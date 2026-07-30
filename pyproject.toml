@@ -3,3 +3,6 @@ name = "fitness-studio"
 version = "1.0.0"
 description = "Academic fitness studio management system (Flask MVC)"
 requires-python = ">=3.12"
+
+[tool.vercel]
+entrypoint = "app:app"
