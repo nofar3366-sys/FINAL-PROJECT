@@ -1,9 +1,8 @@
 """Vercel / local WSGI entrypoint.
 
-Vercel requires a top-level ``app = Flask(...)``.
-On Vercel we keep that shell app for detection/import, and lazy-load the full
-MVC application on the first request. That prevents import-time crashes from
-showing up as FUNCTION_INVOCATION_FAILED with no handler.
+On Vercel we expose a tiny shell Flask app first. /health never imports the
+full MVC stack — that isolates FUNCTION_INVOCATION_FAILED (import/bootstrap
+crashes) from runtime detection. Other paths lazy-load create_app().
 """
 
 from __future__ import annotations
@@ -18,6 +17,7 @@ logger = logging.getLogger("app_entry")
 
 _ON_VERCEL = os.environ.get("VERCEL") == "1" or bool(os.environ.get("VERCEL_ENV"))
 if _ON_VERCEL:
+    # Never touch remote Postgres during serverless cold starts.
     os.environ["FORCE_SQLITE"] = "1"
     os.environ["USE_SQLITE"] = "1"
     os.environ["USE_POSTGRES"] = "0"
@@ -29,38 +29,56 @@ if _ON_VERCEL:
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
 
-_REAL_APP: Flask | None = None
+_REAL_APP = None  # type: ignore[var-annotated]
 _LOAD_ERROR = ""
 _LOAD_ATTEMPTED = False
 
 
+def _shell_payload(extra=None):
+    body = {
+        "status": "ok" if not _LOAD_ERROR else "degraded",
+        "mode": "full" if _REAL_APP is not None else "shell",
+        "vercel": _ON_VERCEL,
+        "git_sha": (os.environ.get("VERCEL_GIT_COMMIT_SHA") or "")[:7] or None,
+        "load_error": (_LOAD_ERROR[:500] if _LOAD_ERROR else None),
+        "load_attempted": _LOAD_ATTEMPTED,
+    }
+    if extra:
+        body.update(extra)
+    return body
+
+
 @app.get("/health")
 def shell_health():
-    return jsonify(
-        {
-            "status": "ok" if not _LOAD_ERROR else "degraded",
-            "mode": "full" if _REAL_APP is not None else "shell",
-            "vercel": _ON_VERCEL,
-            "git_sha": (os.environ.get("VERCEL_GIT_COMMIT_SHA") or "")[:7] or None,
-            "load_error": _LOAD_ERROR[:400] if _LOAD_ERROR else None,
-        }
-    ), (200 if not _LOAD_ERROR else 503)
+    """Always answered by the shell — never imports fitness_studio."""
+    return jsonify(_shell_payload()), (200 if not _LOAD_ERROR else 503)
+
+
+@app.get("/__boot")
+def shell_boot():
+    """Explicitly try loading the full app and report the result."""
+    real = _load_real_app()
+    code = 200 if real is not None else 503
+    return jsonify(_shell_payload({"booted": real is not None})), code
 
 
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
-def shell_home(path: str = ""):
+def shell_catch_all(path: str = ""):
     return (
+        "<!doctype html><html><body style='font-family:sans-serif;padding:2rem'>"
         "<h1>Fitness Studio</h1>"
-        "<p>Entry shell is online.</p>"
+        "<p>Entry shell is online (full app not loaded for this response).</p>"
         f"<p>Full app loaded: {_REAL_APP is not None}</p>"
         f"<pre>{_LOAD_ERROR}</pre>"
-        "<p><a href='/health'>/health</a></p>",
+        "<p><a href='/health'>/health</a> · <a href='/__boot'>/__boot</a> · "
+        "<a href='/auth/login'>/auth/login</a></p>"
+        "</body></html>",
         200,
     )
 
 
-def _load_real_app() -> Flask | None:
+def _load_real_app():
     global _REAL_APP, _LOAD_ERROR, _LOAD_ATTEMPTED
     if _REAL_APP is not None:
         return _REAL_APP
@@ -86,7 +104,10 @@ _SHELL_WSGI = app.wsgi_app
 
 
 def _dispatch(environ, start_response):
-    """Prefer the full MVC app; fall back to the shell Flask app."""
+    """Shell answers /health; everything else prefers the full MVC app."""
+    path = environ.get("PATH_INFO") or "/"
+    if path == "/health" or path == "/__shell":
+        return _SHELL_WSGI(environ, start_response)
 
     real = _load_real_app()
     if real is not None:
@@ -95,10 +116,8 @@ def _dispatch(environ, start_response):
 
 
 if _ON_VERCEL:
-    # Lazy: import/create_app runs on first request, not during module import.
     app.wsgi_app = _dispatch
 else:
-    # Local/dev: load the full app immediately (CLI + flask run expect it).
     loaded = _load_real_app()
     if loaded is not None:
         app = loaded
