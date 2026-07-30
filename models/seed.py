@@ -30,16 +30,41 @@ def _new_user(email: str, role: str = "member") -> User:
     return user
 
 
+def database_has_demo_data() -> bool:
+    """True when core demo tables already contain at least one row."""
+
+    populated_models = (User, Trainer, WorkoutSession, Booking)
+    return any(
+        (db.session.scalar(select(func.count(model.id))) or 0) > 0
+        for model in populated_models
+    )
+
+
+def ensure_demo_data() -> bool:
+    """Seed demo rows only when the database is empty. Safe for app startup."""
+
+    if database_has_demo_data():
+        return False
+    try:
+        seed_demo_data()
+    except click.ClickException:
+        db.session.rollback()
+        return False
+    except Exception:
+        db.session.rollback()
+        # Concurrent startup on Vercel may race; treat existing rows as success.
+        if database_has_demo_data():
+            return False
+        raise
+    return True
+
+
 def seed_demo_data() -> None:
     """Insert deterministic demo states into an otherwise empty database."""
 
     from services.membership_service import ensure_default_plans
 
-    populated_models = (User, Trainer, WorkoutSession, Booking)
-    if any(
-        db.session.scalar(select(func.count(model.id))) > 0
-        for model in populated_models
-    ):
+    if database_has_demo_data():
         raise click.ClickException(
             "Demo seed aborted: the database already contains application data."
         )

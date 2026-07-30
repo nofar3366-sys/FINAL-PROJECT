@@ -2,22 +2,26 @@ from pathlib import Path
 
 import click
 from flask import Flask
-from sqlalchemy import func, select, text
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
+# Import the models package so every table is registered on db.Model.metadata
+# before db.create_all() runs.
+import models  # noqa: F401
 from controllers.auth import auth_bp
 from controllers.core import core_bp
 from controllers.manager import manager_bp
 from controllers.member import member_bp
 from controllers.trainer import trainer_bp
-from models import User, db
-from models.seed import seed_demo_command, seed_demo_data
+from models import db
+from models.seed import ensure_demo_data, seed_demo_command
 from services.ai_service import GroqAIService
 from services.cloud_service import CloudService
 from services.email_service import ReceiptEmailService
 from services.membership_service import ensure_default_plans
 from services.schema_service import upgrade_trainer_accounts
 
-from .config import Config, is_vercel_runtime, sqlalchemy_engine_options
+from .config import Config, sqlalchemy_engine_options
 
 
 def create_app(test_config: dict | None = None) -> Flask:
@@ -58,32 +62,39 @@ def create_app(test_config: dict | None = None) -> Flask:
         app.config["RESEND_API_KEY"], app.config["RECEIPT_FROM_EMAIL"]
     )
 
-    # On Vercel (or any empty cloud DB), create schema and demo rows once.
-    if is_vercel_runtime() and test_config is None:
+    # Local + Vercel: create missing tables and seed empty databases.
+    # Skipped only for the pytest fixture (test_config is provided).
+    if test_config is None:
         with app.app_context():
-            _bootstrap_database()
+            _bootstrap_database(app)
 
     return app
 
 
-def _bootstrap_database() -> None:
-    """Ensure schema exists and seed demo data when the database is empty."""
+def _bootstrap_database(app: Flask) -> None:
+    """Create schema and seed demo data when the connected database is empty."""
 
-    db.create_all()
-    ensure_default_plans()
-    if db.engine.dialect.name == "sqlite":
-        try:
-            db.session.execute(text("PRAGMA journal_mode=DELETE"))
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
+    try:
+        db.create_all()
+        ensure_default_plans()
+        if db.engine.dialect.name == "sqlite":
+            try:
+                db.session.execute(text("PRAGMA journal_mode=DELETE"))
+                db.session.commit()
+            except SQLAlchemyError:
+                db.session.rollback()
 
-    user_count = db.session.scalar(select(func.count(User.id))) or 0
-    if user_count == 0:
-        try:
-            seed_demo_data()
-        except click.ClickException:
-            db.session.rollback()
+        seeded = ensure_demo_data()
+        app.logger.info(
+            "Database bootstrap complete (%s). Demo seed %s.",
+            db.engine.dialect.name,
+            "applied" if seeded else "skipped (already populated)",
+        )
+    except Exception:
+        db.session.rollback()
+        app.logger.exception(
+            "Database bootstrap failed. Check DATABASE_URL / Supabase connectivity."
+        )
 
 
 @click.command("init-db")
