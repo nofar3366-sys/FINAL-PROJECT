@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from models import Member, Trainer, User, WorkoutSession, db
 from models.seed import seed_demo_data
+from services.schema_service import ensure_demo_accounts, repair_database
 
 
 def login(client, email="manager@fitness.local", password="Demo123!"):
@@ -48,7 +49,66 @@ def test_manager_login_logout_and_role_protection(app):
         },
     )
     assert b"Skill executed: get_class_availability_skill" in skill_response.data
-    assert client.get("/manager/members").status_code == 403
+    forbidden = client.get("/manager/members", follow_redirects=True)
+    assert forbidden.status_code == 200
+    assert b"only available to managers" in forbidden.data
+    assert b"Welcome, Alice Active" in forbidden.data
+
+
+def test_stale_session_does_not_return_500(app):
+    seed_demo_data()
+    client = app.test_client()
+    login(client, "alice@fitness.local")
+    with client.session_transaction() as sess:
+        sess["user_id"] = 999_999
+    response = client.get("/member/dashboard", follow_redirects=True)
+    assert response.status_code == 200
+    assert b"Sign in" in response.data
+    assert b"Internal Server Error" not in response.data
+
+
+def test_orphan_member_login_is_not_500(app):
+    orphan = User(email="orphan@fitness.local", role="member", is_active=True)
+    orphan.set_password("Demo123!")
+    db.session.add(orphan)
+    db.session.commit()
+    client = app.test_client()
+    response = client.post(
+        "/auth/login",
+        data={"email": "orphan@fitness.local", "password": "Demo123!"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b"no member profile" in response.data.lower()
+    assert b"Internal Server Error" not in response.data
+
+
+def test_repair_database_restores_demo_logins(app):
+    user = User(email="alice@fitness.local", role="member", is_active=True)
+    user.set_password("wrong-password")
+    db.session.add(user)
+    db.session.commit()
+
+    report = repair_database()
+    assert report["ok"] is True
+    ensure_demo_accounts()
+    alice = db.session.scalar(select(User).where(User.email == "alice@fitness.local"))
+    assert alice.check_password("Demo123!")
+    assert alice.member is not None
+    assert alice.member.first_name == "Alice"
+    assert alice.member.last_name == "Active"
+
+    client = app.test_client()
+    for email, needle in (
+        ("alice@fitness.local", b"Welcome, Alice Active"),
+        ("manager@fitness.local", b"Manager dashboard"),
+        ("maya@fitness.local", b"TRAINER PORTAL"),
+    ):
+        response = login(client, email)
+        assert response.status_code == 200
+        assert needle in response.data
+        assert b"Internal Server Error" not in response.data
+        client.post("/auth/logout", follow_redirects=True)
 
 
 def test_public_registration_creates_zero_credit_member(app):
@@ -142,7 +202,9 @@ def test_trainer_can_manage_own_schedule_and_view_participants(app):
     response = login(client, "maya@fitness.local")
     assert b"TRAINER PORTAL" in response.data
     assert b"Maya Cohen" in response.data
-    assert client.get("/manager/trainers").status_code == 403
+    forbidden = client.get("/manager/trainers", follow_redirects=True)
+    assert forbidden.status_code == 200
+    assert b"only available to managers" in forbidden.data
 
     starts_at = (datetime.now() + timedelta(days=8)).replace(
         hour=14, minute=0, second=0, microsecond=0

@@ -1,4 +1,6 @@
 import os
+import tempfile
+from pathlib import Path
 from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 
 from dotenv import load_dotenv
@@ -13,17 +15,6 @@ def is_vercel_runtime() -> bool:
     return os.environ.get("VERCEL") == "1" or bool(os.environ.get("VERCEL_ENV"))
 
 
-def _is_supabase_pooler_url(url: str) -> bool:
-    """Detect Supabase transaction/session pooler endpoints (PgBouncer)."""
-
-    lowered = url.lower()
-    return (
-        ":6543" in lowered
-        or "pooler.supabase.com" in lowered
-        or "pgbouncer=true" in lowered
-    )
-
-
 def build_supabase_pooler_url(
     project_ref: str,
     password: str,
@@ -31,11 +22,7 @@ def build_supabase_pooler_url(
     region: str = "ap-northeast-1",
     pooler_host: str | None = None,
 ) -> str:
-    """Build a Supabase Transaction pooler URI (port 6543) for SQLAlchemy.
-
-    Username format is ``postgres.<project_ref>`` (required by Supabase pooler).
-    Special characters in the password (including ``%``) are URL-encoded.
-    """
+    """Build a Supabase Transaction pooler URI (port 6543) for SQLAlchemy."""
 
     ref = project_ref.strip()
     raw_password = password.strip()
@@ -52,12 +39,7 @@ def build_supabase_pooler_url(
 
 
 def normalize_database_url(url: str) -> str:
-    """Normalize Supabase/Heroku-style URLs for SQLAlchemy + psycopg (v3).
-
-    - Rewrites legacy postgres:// to postgresql+psycopg://
-    - Ensures sslmode=require for cloud Postgres / pooler URLs
-    - Accepts direct (5432) and transaction pooler (6543) hosts
-    """
+    """Normalize Supabase/Heroku-style URLs for SQLAlchemy + psycopg (v3)."""
 
     value = url.strip()
     if not value:
@@ -66,7 +48,6 @@ def normalize_database_url(url: str) -> str:
     if value.startswith("postgres://"):
         value = "postgresql://" + value[len("postgres://") :]
 
-    # Prefer psycopg3 so we can disable prepared statements for PgBouncer.
     if value.startswith("postgresql+psycopg2://"):
         value = "postgresql+psycopg://" + value[len("postgresql+psycopg2://") :]
     elif value.startswith("postgresql://"):
@@ -78,21 +59,25 @@ def normalize_database_url(url: str) -> str:
     parsed = urlparse(value)
     query = dict(parse_qsl(parsed.query, keep_blank_values=True))
     query.setdefault("sslmode", "require")
-    # psycopg rejects unknown libpq options such as Prisma's pgbouncer=true.
     query.pop("pgbouncer", None)
 
     return urlunparse(parsed._replace(query=urlencode(query)))
 
 
-def resolve_database_uri() -> str:
-    """Resolve Postgres URI from DATABASE_URL or Supabase pooler parts.
+def sqlite_fallback_uri(instance_path: str | Path | None = None) -> str:
+    """Return a writable SQLite URI (Vercel-safe under /tmp when needed)."""
 
-    Priority:
-    1. ``DATABASE_URL``
-    2. Built from ``SUPABASE_PROJECT_REF`` + ``SUPABASE_DB_PASSWORD``
-       (+ optional ``SUPABASE_REGION`` / ``SUPABASE_POOLER_HOST``)
-    3. Local SQLite fallback
-    """
+    if instance_path:
+        db_path = Path(instance_path) / "fitness_studio.db"
+        return f"sqlite:///{db_path.resolve().as_posix()}"
+    if is_vercel_runtime():
+        db_path = Path(tempfile.gettempdir()) / "fitness_studio.db"
+        return f"sqlite:///{db_path.resolve().as_posix()}"
+    return "sqlite:///fitness_studio.db"
+
+
+def resolve_database_uri(instance_path: str | Path | None = None) -> str:
+    """Resolve Postgres URI from env, else local/Vercel SQLite."""
 
     explicit = normalize_database_url(os.environ.get("DATABASE_URL", ""))
     if explicit:
@@ -109,7 +94,7 @@ def resolve_database_uri() -> str:
         )
         return normalize_database_url(built)
 
-    return "sqlite:///fitness_studio.db"
+    return sqlite_fallback_uri(instance_path)
 
 
 def sqlalchemy_engine_options(database_uri: str) -> dict:
@@ -120,26 +105,69 @@ def sqlalchemy_engine_options(database_uri: str) -> dict:
         options["connect_args"] = {"timeout": 10}
         return options
 
-    # NullPool avoids sticky connections across Vercel serverless invocations.
     from sqlalchemy.pool import NullPool
 
     options["poolclass"] = NullPool
     options["connect_args"] = {
-        "connect_timeout": 15,
-        # Critical for Supabase transaction pooler (PgBouncer on :6543).
+        # Fail fast so Vercel cold starts do not hang on a bad DATABASE_URL.
+        "connect_timeout": 3,
         "prepare_threshold": None,
     }
     return options
 
 
-class Config:
-    """Base application configuration.
+def probe_database_uri(database_uri: str, timeout_seconds: float = 3.0) -> bool:
+    """Return True when a short SELECT 1 succeeds against the URI."""
 
-    Prefer Supabase Transaction pooler (port 6543) via DATABASE_URL.
-    Local development falls back to instance SQLite when no cloud URI is set.
+    if not database_uri:
+        return False
+    if database_uri.startswith("sqlite"):
+        return True
+
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(
+        database_uri,
+        pool_pre_ping=False,
+        connect_args={
+            "connect_timeout": max(1, int(timeout_seconds)),
+            "prepare_threshold": None,
+        },
+    )
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
+    finally:
+        engine.dispose()
+
+
+def resolve_runtime_database_uri(instance_path: str | Path | None = None) -> tuple[str, str]:
+    """Choose a working DB URI.
+
+    Returns ``(uri, source)`` where source is ``postgres``, ``sqlite-fallback``,
+    or ``sqlite``. If configured Postgres is unreachable, fall back to SQLite so
+    the academic demo still boots on Vercel.
     """
 
+    configured = resolve_database_uri(instance_path)
+    if configured.startswith("sqlite"):
+        return configured, "sqlite"
+
+    if probe_database_uri(configured, timeout_seconds=3.0):
+        return configured, "postgres"
+
+    fallback = sqlite_fallback_uri(instance_path)
+    return fallback, "sqlite-fallback"
+
+
+class Config:
+    """Base application configuration."""
+
     SECRET_KEY = os.environ.get("SECRET_KEY", "development-only-change-me")
+    # Placeholder; create_app() overwrites with a probed runtime URI.
     SQLALCHEMY_DATABASE_URI = resolve_database_uri()
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = sqlalchemy_engine_options(SQLALCHEMY_DATABASE_URI)
@@ -147,8 +175,8 @@ class Config:
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
     PERMANENT_SESSION_LIFETIME = 60 * 60 * 24 * 7
-    # Secure cookies on Vercel HTTPS so browsers retain the Flask session.
     SESSION_COOKIE_SECURE = is_vercel_runtime()
+    DATABASE_SOURCE = "unresolved"
 
     GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
     GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")

@@ -2,9 +2,9 @@ import tempfile
 from pathlib import Path
 
 import click
-from flask import Flask
+from flask import Flask, flash, redirect, session, url_for
 from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 # Register every model on db.Model.metadata before create_all().
@@ -19,24 +19,28 @@ from models.seed import ensure_demo_data, seed_demo_command
 from services.ai_service import GroqAIService
 from services.email_service import ReceiptEmailService
 from services.membership_service import ensure_default_plans
-from services.schema_service import upgrade_trainer_accounts
+from services.schema_service import repair_database, upgrade_trainer_accounts
 
-from .config import Config, is_vercel_runtime, sqlalchemy_engine_options
+from .config import (
+    Config,
+    is_vercel_runtime,
+    resolve_runtime_database_uri,
+    sqlalchemy_engine_options,
+)
 
 
 def _writable_instance_path(project_root: Path) -> Path:
-    """Return a writable absolute instance directory.
-
-    Vercel's deployment filesystem is read-only except the OS temp dir, so
-    creating project_root/instance there raises PermissionError and prevents
-    `app.py` from importing.
-    """
+    """Return a writable absolute instance directory for Flask + SQLite."""
 
     candidates = []
     if is_vercel_runtime():
-        candidates.append(Path(tempfile.gettempdir()).resolve() / "fitness_studio_instance")
+        candidates.append(
+            Path(tempfile.gettempdir()).resolve() / "fitness_studio_instance"
+        )
     candidates.append((project_root / "instance").resolve())
-    candidates.append(Path(tempfile.gettempdir()).resolve() / "fitness_studio_instance")
+    candidates.append(
+        Path(tempfile.gettempdir()).resolve() / "fitness_studio_instance"
+    )
 
     last_error: OSError | None = None
     for path in candidates:
@@ -68,12 +72,28 @@ def create_app(test_config: dict | None = None) -> Flask:
         static_url_path="/static",
     )
     app.config.from_object(Config)
+
     if test_config:
         app.config.update(test_config)
-        uri = app.config.get("SQLALCHEMY_DATABASE_URI", "")
-        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = sqlalchemy_engine_options(str(uri))
+        uri = str(app.config.get("SQLALCHEMY_DATABASE_URI", ""))
+        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = sqlalchemy_engine_options(uri)
+        app.config["DATABASE_SOURCE"] = (
+            "sqlite" if uri.startswith("sqlite") else "postgres"
+        )
+    else:
+        # Probe configured Postgres; if unreachable, fall back to SQLite so the
+        # Vercel demo never hard-crashes on a bad DATABASE_URL / tenant.
+        uri, source = resolve_runtime_database_uri(instance_path)
+        app.config["SQLALCHEMY_DATABASE_URI"] = uri
+        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = sqlalchemy_engine_options(uri)
+        app.config["DATABASE_SOURCE"] = source
+        if source == "sqlite-fallback":
+            app.logger.error(
+                "Configured PostgreSQL/Supabase is unreachable. "
+                "Falling back to SQLite at %s so the app remains available.",
+                uri,
+            )
 
-    # Vercel terminates TLS at the edge; trust X-Forwarded-* for cookies/URLs.
     if is_vercel_runtime():
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
@@ -86,14 +106,13 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.cli.add_command(init_db_command)
     app.cli.add_command(seed_demo_command)
     app.cli.add_command(upgrade_db_command)
+    _register_error_handlers(app)
 
     app.extensions["ai_service"] = GroqAIService.from_config(app.config)
     app.extensions["receipt_email"] = ReceiptEmailService(
         app.config["RESEND_API_KEY"], app.config["RECEIPT_FROM_EMAIL"]
     )
 
-    # Local + Vercel: create missing tables and seed empty databases.
-    # Skipped only for the pytest fixture (test_config is provided).
     if test_config is None:
         with app.app_context():
             _bootstrap_database(app)
@@ -101,12 +120,79 @@ def create_app(test_config: dict | None = None) -> Flask:
     return app
 
 
+def _register_error_handlers(app: Flask) -> None:
+    """Convert unexpected DB failures into a recoverable login redirect."""
+
+    @app.errorhandler(SQLAlchemyError)
+    def handle_sqlalchemy_error(exc: SQLAlchemyError):
+        app.logger.exception("Unhandled SQLAlchemyError: %s", exc)
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        # Only attempt repair when we already have a working engine (not a
+        # dead remote). Repair itself is best-effort and never re-raises.
+        if not isinstance(exc, OperationalError):
+            try:
+                repair_database()
+            except Exception:
+                app.logger.exception("Error-handler repair_database failed")
+        session.clear()
+        flash(
+            "A database problem was detected. Please sign in again. "
+            "If this continues, the studio database may be unavailable.",
+            "warning",
+        )
+        return redirect(url_for("auth.login"))
+
+    @app.errorhandler(500)
+    def handle_internal_error(exc):
+        app.logger.exception("Unhandled 500: %s", exc)
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        session.clear()
+        flash(
+            "Something went wrong while loading that page. Please sign in again.",
+            "danger",
+        )
+        return redirect(url_for("auth.login"))
+
+
 def _bootstrap_database(app: Flask) -> None:
-    """Create schema and seed demo data when the connected database is empty."""
+    """Crash-proof startup: never raise out of bootstrap on Vercel cold starts."""
 
     try:
-        db.create_all()
-        ensure_default_plans()
+        try:
+            db.create_all()
+        except Exception:
+            app.logger.exception("db.create_all failed during bootstrap")
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            return
+
+        try:
+            repair_report = repair_database()
+            app.logger.info("Database repair report: %s", repair_report)
+        except Exception:
+            app.logger.exception("repair_database failed during bootstrap")
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+
+        try:
+            ensure_default_plans()
+        except Exception:
+            app.logger.exception("ensure_default_plans failed during bootstrap")
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+
         if db.engine.dialect.name == "sqlite":
             try:
                 db.session.execute(text("PRAGMA journal_mode=DELETE"))
@@ -114,11 +200,27 @@ def _bootstrap_database(app: Flask) -> None:
             except SQLAlchemyError:
                 db.session.rollback()
 
-        seeded = ensure_demo_data()
+        try:
+            seeded = ensure_demo_data()
+        except Exception:
+            app.logger.exception("ensure_demo_data failed during bootstrap")
+            seeded = False
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+
+        try:
+            demo_accounts = repair_database().get("demo_accounts", {})
+        except Exception:
+            demo_accounts = {}
+
         app.logger.info(
-            "Database bootstrap complete (%s). Demo seed %s.",
+            "Database bootstrap complete (%s / %s). Demo seed %s. Accounts: %s.",
             db.engine.dialect.name,
-            "applied" if seeded else "skipped (already populated)",
+            app.config.get("DATABASE_SOURCE"),
+            "applied" if seeded else "skipped/failed",
+            demo_accounts,
         )
     except Exception:
         try:
@@ -140,6 +242,7 @@ def init_db_command(drop: bool) -> None:
     elif drop:
         raise click.Abort()
     db.create_all()
+    repair_database()
     ensure_default_plans()
     if db.engine.dialect.name == "sqlite":
         db.session.execute(text("PRAGMA journal_mode=WAL"))
@@ -151,5 +254,7 @@ def init_db_command(drop: bool) -> None:
 def upgrade_db_command() -> None:
     """Ensure trainer user accounts exist for trainer profiles."""
 
+    report = repair_database()
     created = upgrade_trainer_accounts()
-    click.echo(f"Database upgraded. Trainer logins created: {created}.")
+    click.echo(f"Database repaired: {report}")
+    click.echo(f"Trainer logins created: {created}.")

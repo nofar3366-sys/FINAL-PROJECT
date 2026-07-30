@@ -18,6 +18,7 @@ from flask import (
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from controllers.safe_db import db_safe, recover_from_db_error
 from models import Member, User, db
 
 
@@ -41,6 +42,12 @@ def validate_csrf() -> None:
         abort(400, description="Invalid form token.")
 
 
+def clear_invalid_session(message: str | None = None) -> None:
+    session.clear()
+    if message:
+        flash(message, "warning")
+
+
 @auth_bp.app_context_processor
 def inject_csrf_token():
     return {"csrf_token": csrf_token}
@@ -55,17 +62,31 @@ def load_logged_in_user() -> None:
     try:
         user_pk = int(user_id)
     except (TypeError, ValueError):
-        session.pop("user_id", None)
+        clear_invalid_session("Your session was invalid. Please sign in again.")
         return
     try:
         g.user = db.session.get(User, user_pk)
+        # Touch role-specific profiles early so schema mismatches fail here,
+        # not as an unhandled 500 inside a dashboard template.
+        if g.user is not None:
+            _ = g.user.normalized_role
+            if g.user.normalized_role == "member":
+                _ = g.user.member
+            elif g.user.normalized_role == "trainer":
+                _ = g.user.trainer
     except SQLAlchemyError:
-        # Keep the session identity; a transient DB blip should not log the user out.
         current_app.logger.exception("Failed to load session user %s", user_pk)
+        recover_from_db_error(
+            "Your session could not be loaded because the database schema "
+            "was out of date. Please sign in again."
+        )
         g.user = None
         return
     if g.user is None or g.user.is_active is False:
-        session.pop("user_id", None)
+        clear_invalid_session(
+            "Your session expired or the account is no longer available. "
+            "Please sign in again."
+        )
         g.user = None
 
 
@@ -82,9 +103,11 @@ def login_required(view):
 def manager_required(view):
     @wraps(view)
     @login_required
+    @db_safe
     def wrapped_view(*args, **kwargs):
         if g.user.normalized_role != "manager":
-            abort(403)
+            flash("That page is only available to managers.", "warning")
+            return _dashboard_redirect()
         return view(*args, **kwargs)
 
     return wrapped_view
@@ -93,15 +116,57 @@ def manager_required(view):
 def trainer_required(view):
     @wraps(view)
     @login_required
+    @db_safe
     def wrapped_view(*args, **kwargs):
-        if g.user.normalized_role != "trainer" or g.user.trainer is None:
-            abort(403)
+        try:
+            role = g.user.normalized_role
+            trainer = g.user.trainer
+        except SQLAlchemyError:
+            current_app.logger.exception("Trainer profile lookup failed")
+            recover_from_db_error()
+            return redirect(url_for("auth.login"))
+        if role != "trainer":
+            flash("That page is only available to trainers.", "warning")
+            return _dashboard_redirect()
+        if trainer is None:
+            clear_invalid_session(
+                "Your trainer profile is missing. Please sign in again after "
+                "the studio data is restored."
+            )
+            return redirect(url_for("auth.login"))
+        return view(*args, **kwargs)
+
+    return wrapped_view
+
+
+def member_required(view):
+    @wraps(view)
+    @login_required
+    @db_safe
+    def wrapped_view(*args, **kwargs):
+        try:
+            role = g.user.normalized_role
+            member = g.user.member
+        except SQLAlchemyError:
+            current_app.logger.exception("Member profile lookup failed")
+            recover_from_db_error()
+            return redirect(url_for("auth.login"))
+        if role != "member":
+            flash("That page is only available to members.", "warning")
+            return _dashboard_redirect()
+        if member is None:
+            clear_invalid_session(
+                "Your member profile is missing. Please sign in again after "
+                "the studio data is restored, or register a new account."
+            )
+            return redirect(url_for("auth.login"))
         return view(*args, **kwargs)
 
     return wrapped_view
 
 
 @auth_bp.route("/login", methods=("GET", "POST"))
+@db_safe
 def login():
     if g.user is not None:
         return _dashboard_redirect()
@@ -118,7 +183,8 @@ def login():
         except SQLAlchemyError:
             current_app.logger.exception("Login lookup failed for %s", email)
             flash(
-                "Unable to reach the database. Please try again in a moment.",
+                "Unable to reach the database. Please try again in a moment. "
+                "If this persists, the configured DATABASE_URL may be invalid.",
                 "danger",
             )
             return render_template("login.html")
@@ -127,27 +193,47 @@ def login():
         if user is None or not active or not user.check_password(password):
             flash("Invalid email or password.", "danger")
         else:
-            if user.needs_password_rehash():
-                try:
+            try:
+                if user.needs_password_rehash():
                     user.set_password(password)
                     if user.role != user.normalized_role:
                         user.role = user.normalized_role
                     db.session.commit()
-                except SQLAlchemyError:
-                    db.session.rollback()
-                    current_app.logger.exception(
-                        "Password rehash failed for user %s", user.id
-                    )
-            session.clear()
-            session["user_id"] = int(user.id)
-            session.permanent = True
-            flash("Welcome back.", "success")
-            return _dashboard_redirect(user)
+                role = user.normalized_role
+                member = user.member if role == "member" else None
+                trainer = user.trainer if role == "trainer" else None
+            except SQLAlchemyError:
+                current_app.logger.exception("Login profile check failed")
+                recover_from_db_error(
+                    "Login could not finish because the database needed repair. "
+                    "Please try signing in once more."
+                )
+                return redirect(url_for("auth.login"))
+
+            if role == "member" and member is None:
+                flash(
+                    "This account has no member profile. Ask a manager to "
+                    "recreate it, or register again.",
+                    "danger",
+                )
+            elif role == "trainer" and trainer is None:
+                flash(
+                    "This account has no trainer profile. Ask a manager to "
+                    "recreate the trainer login.",
+                    "danger",
+                )
+            else:
+                session.clear()
+                session["user_id"] = int(user.id)
+                session.permanent = True
+                flash("Welcome back.", "success")
+                return _dashboard_redirect(user)
 
     return render_template("login.html")
 
 
 @auth_bp.route("/register", methods=("GET", "POST"))
+@db_safe
 def register():
     if g.user is not None:
         return _dashboard_redirect()
@@ -172,10 +258,20 @@ def register():
             error = "Password must contain at least 6 characters."
         elif password != confirm_password:
             error = "Passwords do not match."
-        elif db.session.scalar(
-            select(User.id).where(func.lower(User.email) == email)
-        ):
-            error = "An account with this email already exists."
+        else:
+            try:
+                exists = db.session.scalar(
+                    select(User.id).where(func.lower(User.email) == email)
+                )
+            except SQLAlchemyError:
+                current_app.logger.exception("Register lookup failed")
+                flash(
+                    "Unable to reach the database. Please try again in a moment.",
+                    "danger",
+                )
+                return render_template("register.html")
+            if exists:
+                error = "An account with this email already exists."
 
         if error:
             flash(error, "danger")
@@ -197,6 +293,14 @@ def register():
             except IntegrityError:
                 db.session.rollback()
                 flash("An account with this email already exists.", "danger")
+            except SQLAlchemyError:
+                db.session.rollback()
+                current_app.logger.exception("Registration insert failed")
+                recover_from_db_error(
+                    "Registration failed because the database needed repair. "
+                    "Please try again."
+                )
+                return redirect(url_for("auth.register"))
             else:
                 flash(
                     "Registration complete. A manager can renew your membership.",
@@ -218,11 +322,18 @@ def logout():
 
 def _dashboard_redirect(user=None):
     current_user = user or g.user
+    if current_user is None:
+        return redirect(url_for("auth.login"))
     endpoints = {
         "manager": "manager.dashboard",
         "trainer": "trainer.dashboard",
         "member": "member.dashboard",
     }
     role = current_user.normalized_role
-    endpoint = endpoints.get(role, "member.dashboard")
+    endpoint = endpoints.get(role)
+    if endpoint is None:
+        clear_invalid_session(
+            "Your account role is not recognized. Please sign in again."
+        )
+        return redirect(url_for("auth.login"))
     return redirect(url_for(endpoint))

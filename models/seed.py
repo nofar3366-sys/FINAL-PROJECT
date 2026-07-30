@@ -233,7 +233,11 @@ def seed_demo_command() -> None:
     """Populate a fresh database with presentation-ready demonstration data."""
 
     try:
+        from services.schema_service import repair_database
+
+        repair_database()
         seed_demo_data()
+        repair_database()
     except Exception:
         db.session.rollback()
         raise
@@ -241,4 +245,5 @@ def seed_demo_command() -> None:
     click.echo("Demo data created.")
     click.echo("Manager: manager@fitness.local / Demo123!")
     click.echo("Members: alice@fitness.local, ben@fitness.local / Demo123!")
+    click.echo("Trainer: maya@fitness.local / Demo123!")
     click.echo("These credentials are development-only.")

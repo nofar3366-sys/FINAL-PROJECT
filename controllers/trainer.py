@@ -1,9 +1,20 @@
 from datetime import datetime, timedelta
 
-from flask import Blueprint, flash, g, redirect, render_template, request, url_for
+from flask import (
+    Blueprint,
+    current_app,
+    flash,
+    g,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from controllers.auth import trainer_required, validate_csrf
+from controllers.safe_db import recover_from_db_error
 from models import Booking, WorkoutSession, db
 from models.time_utils import ensure_utc, utc_now
 from services.scheduling_service import SchedulingError, cancel_session, create_session
@@ -15,11 +26,16 @@ trainer_bp = Blueprint("trainer", __name__, url_prefix="/trainer")
 @trainer_bp.get("/dashboard")
 @trainer_required
 def dashboard():
-    sessions = db.session.scalars(
-        select(WorkoutSession)
-        .where(WorkoutSession.trainer_id == g.user.trainer.id)
-        .order_by(WorkoutSession.starts_at)
-    ).all()
+    try:
+        sessions = db.session.scalars(
+            select(WorkoutSession)
+            .where(WorkoutSession.trainer_id == g.user.trainer.id)
+            .order_by(WorkoutSession.starts_at)
+        ).all()
+    except SQLAlchemyError:
+        current_app.logger.exception("Trainer dashboard query failed")
+        recover_from_db_error()
+        return redirect(url_for("auth.login"))
     return render_template(
         "trainer_dashboard.html",
         trainer=g.user.trainer,

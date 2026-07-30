@@ -2,7 +2,6 @@ from datetime import date, timedelta
 
 from flask import (
     Blueprint,
-    abort,
     current_app,
     flash,
     g,
@@ -12,8 +11,10 @@ from flask import (
     url_for,
 )
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 
-from controllers.auth import login_required, validate_csrf
+from controllers.auth import member_required, validate_csrf
+from controllers.safe_db import recover_from_db_error
 from models import Booking, MembershipPlan, MembershipPurchase, WorkoutSession, db
 from models.time_utils import utc_now
 from services.ai_service import AIServiceError, KnowledgeDocument
@@ -34,27 +35,32 @@ WEEK_DAYS = (
 
 
 @member_bp.get("/dashboard")
-@login_required
+@member_required
 def dashboard():
-    member = _current_member()
-    upcoming_bookings = db.session.scalars(
-        select(Booking)
-        .join(Booking.workout_session)
-        .where(
-            Booking.member_id == member.id,
-            Booking.status == "booked",
-            WorkoutSession.starts_at > utc_now(),
+    member = g.user.member
+    try:
+        upcoming_bookings = db.session.scalars(
+            select(Booking)
+            .join(Booking.workout_session)
+            .where(
+                Booking.member_id == member.id,
+                Booking.status == "booked",
+                WorkoutSession.starts_at > utc_now(),
+            )
+            .order_by(WorkoutSession.starts_at)
+        ).all()
+        used_credits = db.session.scalar(
+            select(func.count(Booking.id)).where(
+                Booking.member_id == member.id,
+                Booking.status == "booked",
+                Booking.credit_consumed.is_(True),
+                Booking.credit_refunded.is_(False),
+            )
         )
-        .order_by(WorkoutSession.starts_at)
-    ).all()
-    used_credits = db.session.scalar(
-        select(func.count(Booking.id)).where(
-            Booking.member_id == member.id,
-            Booking.status == "booked",
-            Booking.credit_consumed.is_(True),
-            Booking.credit_refunded.is_(False),
-        )
-    )
+    except SQLAlchemyError:
+        current_app.logger.exception("Member dashboard query failed")
+        recover_from_db_error()
+        return redirect(url_for("auth.login"))
     return render_template(
         "dashboard.html",
         member=member,
@@ -64,10 +70,15 @@ def dashboard():
 
 
 @member_bp.get("/schedule")
-@login_required
+@member_required
 def schedule():
-    member = _current_member()
-    sessions, bookings, booked_session_ids = _schedule_data(member.id)
+    member = g.user.member
+    try:
+        sessions, bookings, booked_session_ids = _schedule_data(member.id)
+    except SQLAlchemyError:
+        current_app.logger.exception("Member schedule query failed")
+        recover_from_db_error()
+        return redirect(url_for("auth.login"))
     workouts_by_day = {day: [] for day in WEEK_DAYS}
     for workout_session in sessions:
         day_index = (workout_session.starts_at.weekday() + 1) % 7
@@ -100,9 +111,9 @@ def schedule():
 
 
 @member_bp.get("/renewal")
-@login_required
+@member_required
 def renewal():
-    member = _current_member()
+    member = g.user.member
     plans = db.session.scalars(
         select(MembershipPlan)
         .where(MembershipPlan.is_active.is_(True))
@@ -112,10 +123,10 @@ def renewal():
 
 
 @member_bp.post("/sessions/<int:session_id>/book")
-@login_required
+@member_required
 def book(session_id: int):
     validate_csrf()
-    member = _current_member()
+    member = g.user.member
     try:
         book_session(member.id, session_id)
     except BookingError as exc:
@@ -126,10 +137,10 @@ def book(session_id: int):
 
 
 @member_bp.post("/bookings/<int:booking_id>/cancel")
-@login_required
+@member_required
 def cancel(booking_id: int):
     validate_csrf()
-    member = _current_member()
+    member = g.user.member
     try:
         cancel_booking(member.id, booking_id)
     except BookingError as exc:
@@ -140,10 +151,10 @@ def cancel(booking_id: int):
 
 
 @member_bp.post("/membership/purchase")
-@login_required
+@member_required
 def purchase():
     validate_csrf()
-    member = _current_member()
+    member = g.user.member
     plan_code = request.form.get("plan_code", "")
     try:
         purchase_id = purchase_membership(member.id, plan_code, g.user.id)
@@ -172,9 +183,9 @@ def purchase():
 
 
 @member_bp.route("/assistant", methods=("GET", "POST"))
-@login_required
+@member_required
 def assistant():
-    member = _current_member()
+    member = g.user.member
     if request.method == "GET":
         return render_template(
             "ai_assistant.html",
@@ -221,10 +232,10 @@ def assistant():
 
 
 @member_bp.post("/assistant/availability")
-@login_required
+@member_required
 def assistant_availability():
     validate_csrf()
-    member = _current_member()
+    member = g.user.member
     try:
         result = get_class_availability_skill(
             request.form.get("date", ""),
@@ -253,10 +264,10 @@ def assistant_availability():
 
 
 @member_bp.post("/assistant/recommend")
-@login_required
+@member_required
 def assistant_recommendation():
     validate_csrf()
-    member = _current_member()
+    member = g.user.member
     goal = request.form.get("goal", "").strip()
     upcoming = db.session.scalars(
         select(WorkoutSession)
@@ -304,12 +315,6 @@ def assistant_recommendation():
         suggested_date=(date.today() + timedelta(days=1)).isoformat(),
         goal=goal,
     )
-
-
-def _current_member():
-    if g.user.normalized_role != "member" or g.user.member is None:
-        abort(403)
-    return g.user.member
 
 
 def _schedule_data(member_id: int):

@@ -28,7 +28,9 @@ class Trainer(db.Model):
 
     @property
     def full_name(self) -> str:
-        return f"{self.first_name} {self.last_name}".strip()
+        first = (getattr(self, "first_name", None) or "").strip()
+        last = (getattr(self, "last_name", None) or "").strip()
+        return f"{first} {last}".strip() or "Trainer"
 
     def __repr__(self) -> str:
         return f"<Trainer {self.full_name!r} specialty={self.specialty!r}>"

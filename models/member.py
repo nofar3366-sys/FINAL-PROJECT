@@ -52,7 +52,9 @@ class Member(db.Model):
 
     @property
     def full_name(self) -> str:
-        return f"{self.first_name} {self.last_name}".strip()
+        first = (getattr(self, "first_name", None) or "").strip()
+        last = (getattr(self, "last_name", None) or "").strip()
+        return f"{first} {last}".strip() or "Member"
 
     def has_active_membership(self, on_date: date | None = None) -> bool:
         effective_date = on_date or date.today()

@@ -13,9 +13,10 @@ from flask import (
     url_for,
 )
 from sqlalchemy import func, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from controllers.auth import manager_required, validate_csrf
+from controllers.safe_db import recover_from_db_error
 from models import (
     Booking,
     Member,
@@ -45,23 +46,30 @@ manager_bp = Blueprint("manager", __name__, url_prefix="/manager")
 @manager_bp.get("/dashboard")
 @manager_required
 def dashboard():
-    counts = {
-        "members": db.session.scalar(select(func.count(Member.id))),
-        "trainers": db.session.scalar(select(func.count(Trainer.id))),
-        "sessions": db.session.scalar(select(func.count(WorkoutSession.id))),
-        "bookings": db.session.scalar(
-            select(func.count(Booking.id)).where(Booking.status == "booked")
-        ),
-        "revenue_cents": db.session.scalar(
-            select(func.coalesce(func.sum(MembershipPurchase.amount_paid_cents), 0))
-        ),
-    }
-    members = db.session.scalars(
-        select(Member).order_by(Member.created_at.desc()).limit(5)
-    ).all()
-    trainers = db.session.scalars(
-        select(Trainer).order_by(Trainer.created_at.desc()).limit(5)
-    ).all()
+    try:
+        counts = {
+            "members": db.session.scalar(select(func.count(Member.id))),
+            "trainers": db.session.scalar(select(func.count(Trainer.id))),
+            "sessions": db.session.scalar(select(func.count(WorkoutSession.id))),
+            "bookings": db.session.scalar(
+                select(func.count(Booking.id)).where(Booking.status == "booked")
+            ),
+            "revenue_cents": db.session.scalar(
+                select(
+                    func.coalesce(func.sum(MembershipPurchase.amount_paid_cents), 0)
+                )
+            ),
+        }
+        members = db.session.scalars(
+            select(Member).order_by(Member.created_at.desc()).limit(5)
+        ).all()
+        trainers = db.session.scalars(
+            select(Trainer).order_by(Trainer.created_at.desc()).limit(5)
+        ).all()
+    except SQLAlchemyError:
+        current_app.logger.exception("Manager dashboard query failed")
+        recover_from_db_error()
+        return redirect(url_for("auth.login"))
     return render_template(
         "dashboard.html",
         counts=counts,
