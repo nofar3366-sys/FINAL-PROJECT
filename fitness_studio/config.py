@@ -110,7 +110,7 @@ def sqlalchemy_engine_options(database_uri: str) -> dict:
     options["poolclass"] = NullPool
     options["connect_args"] = {
         # Fail fast so Vercel cold starts do not hang on a bad DATABASE_URL.
-        "connect_timeout": 3,
+        "connect_timeout": 1 if is_vercel_runtime() else 2,
         "prepare_threshold": None,
     }
     return options
@@ -148,19 +148,31 @@ def resolve_runtime_database_uri(instance_path: str | Path | None = None) -> tup
     """Choose a working DB URI.
 
     Returns ``(uri, source)`` where source is ``postgres``, ``sqlite-fallback``,
-    or ``sqlite``. If configured Postgres is unreachable, fall back to SQLite so
-    the academic demo still boots on Vercel.
+    ``sqlite-forced``, or ``sqlite``. If configured Postgres is unreachable, fall
+    back to SQLite so the academic demo still boots on Vercel.
+
+    Set ``FORCE_SQLITE=1`` (or ``USE_SQLITE=1``) to skip Postgres entirely — useful
+    on Vercel when the Supabase tenant/URL is invalid and cold starts must be fast.
     """
+
+    force_sqlite = os.environ.get("FORCE_SQLITE", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    } or os.environ.get("USE_SQLITE", "").lower() in {"1", "true", "yes"}
+    if force_sqlite:
+        return sqlite_fallback_uri(instance_path), "sqlite-forced"
 
     configured = resolve_database_uri(instance_path)
     if configured.startswith("sqlite"):
         return configured, "sqlite"
 
-    if probe_database_uri(configured, timeout_seconds=3.0):
+    # Fail fast on Vercel: multi-second pooler retries were timing out cold starts.
+    probe_timeout = 1.0 if is_vercel_runtime() else 2.0
+    if probe_database_uri(configured, timeout_seconds=probe_timeout):
         return configured, "postgres"
 
-    fallback = sqlite_fallback_uri(instance_path)
-    return fallback, "sqlite-fallback"
+    return sqlite_fallback_uri(instance_path), "sqlite-fallback"
 
 
 class Config:

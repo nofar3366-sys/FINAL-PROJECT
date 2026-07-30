@@ -87,10 +87,11 @@ def create_app(test_config: dict | None = None) -> Flask:
         app.config["SQLALCHEMY_DATABASE_URI"] = uri
         app.config["SQLALCHEMY_ENGINE_OPTIONS"] = sqlalchemy_engine_options(uri)
         app.config["DATABASE_SOURCE"] = source
-        if source == "sqlite-fallback":
+        if source in {"sqlite-fallback", "sqlite-forced"}:
             app.logger.error(
-                "Configured PostgreSQL/Supabase is unreachable. "
-                "Falling back to SQLite at %s so the app remains available.",
+                "Using SQLite (%s) at %s. Configure a valid DATABASE_URL "
+                "when Supabase is available.",
+                source,
                 uri,
             )
 
@@ -115,7 +116,10 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     if test_config is None:
         with app.app_context():
-            _bootstrap_database(app)
+            try:
+                _bootstrap_database(app)
+            except Exception:
+                app.logger.exception("Bootstrap escaped create_app")
 
     return app
 
@@ -145,9 +149,14 @@ def _register_error_handlers(app: Flask) -> None:
         )
         return redirect(url_for("auth.login"))
 
-    @app.errorhandler(500)
-    def handle_internal_error(exc):
-        app.logger.exception("Unhandled 500: %s", exc)
+    @app.errorhandler(Exception)
+    def handle_any_exception(exc):
+        # Let HTTPException (404/400/redirects) pass through Werkzeug/Flask defaults.
+        from werkzeug.exceptions import HTTPException
+
+        if isinstance(exc, HTTPException):
+            return exc
+        app.logger.exception("Unhandled Exception: %s", exc)
         try:
             db.session.rollback()
         except Exception:
