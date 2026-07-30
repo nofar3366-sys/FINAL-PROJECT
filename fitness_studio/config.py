@@ -6,12 +6,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def is_vercel_runtime() -> bool:
+    """True when running inside a Vercel Serverless / Fluid Function."""
+
+    return os.environ.get("VERCEL") == "1" or bool(os.environ.get("VERCEL_ENV"))
+
+
 class Config:
     """Base application configuration.
 
     A relative SQLite URI is resolved by Flask-SQLAlchemy against Flask's
     instance directory, so the primary database is always
-    instance/fitness_studio.db.
+    instance/fitness_studio.db locally. On Vercel, create_app overrides the
+    URI to a writable /tmp path.
     """
 
     SECRET_KEY = os.environ.get("SECRET_KEY", "development-only-change-me")
