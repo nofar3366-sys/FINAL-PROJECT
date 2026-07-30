@@ -55,6 +55,17 @@ def test_manager_login_logout_and_role_protection(app):
     assert b"Welcome, Alice Active" in forbidden.data
 
 
+def test_member_dashboard_renders_200(app):
+    seed_demo_data()
+    client = app.test_client()
+    login(client, "alice@fitness.local")
+    response = client.get("/member/dashboard")
+    assert response.status_code == 200
+    assert b"Welcome, Alice Active" in response.data
+    assert b"MEMBER OVERVIEW" in response.data
+    assert b"Internal Server Error" not in response.data
+
+
 def test_stale_session_does_not_return_500(app):
     seed_demo_data()
     client = app.test_client()

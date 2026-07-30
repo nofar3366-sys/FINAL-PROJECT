@@ -32,9 +32,13 @@ class Trainer(db.Model):
 
     @property
     def full_name(self) -> str:
-        first = (getattr(self, "first_name", None) or "").strip()
-        last = (getattr(self, "last_name", None) or "").strip()
-        return f"{first} {last}".strip() or "Trainer"
+        """Unbreakable display name for Jinja (never raises)."""
+
+        try:
+            return f"{self.first_name or ''} {self.last_name or ''}".strip() or "Trainer"
+        except Exception:
+            return "Trainer"
+
 
     def __repr__(self) -> str:
         return f"<Trainer {self.full_name!r} specialty={self.specialty!r}>"

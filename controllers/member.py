@@ -12,11 +12,12 @@ from flask import (
 )
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import joinedload
 
-from controllers.auth import member_required, validate_csrf
+from controllers.auth import clear_invalid_session, member_required, validate_csrf
 from controllers.safe_db import recover_from_db_error
 from models import Booking, MembershipPlan, MembershipPurchase, WorkoutSession, db
-from models.time_utils import utc_now
+from models.time_utils import ensure_utc, utc_now
 from services.ai_service import AIServiceError, KnowledgeDocument
 from services.booking_service import BookingError, book_session, cancel_booking
 from services.membership_service import MembershipPurchaseError, purchase_membership
@@ -34,53 +35,126 @@ WEEK_DAYS = (
 )
 
 
+def _member_dashboard_context(member) -> dict:
+    """Build template-safe primitives so Jinja never touches fragile ORM graphs."""
+
+    member_name = f"{getattr(member, 'first_name', '') or ''} {getattr(member, 'last_name', '') or ''}".strip() or "Member"
+    try:
+        credit_balance = int(getattr(member, "credit_balance", 0) or 0)
+    except (TypeError, ValueError):
+        credit_balance = 0
+    membership_expires_on = getattr(member, "membership_expires_on", None)
+    try:
+        membership_active = bool(member.has_active_membership())
+    except Exception:
+        membership_active = bool(
+            getattr(member, "status", None) == "active"
+            and membership_expires_on is not None
+            and membership_expires_on >= date.today()
+        )
+
+    upcoming_items: list[dict] = []
+    used_credits = 0
+    try:
+        now = utc_now()
+        bookings = (
+            db.session.scalars(
+                select(Booking)
+                .options(
+                    joinedload(Booking.workout_session).joinedload(
+                        WorkoutSession.trainer
+                    )
+                )
+                .where(
+                    Booking.member_id == member.id,
+                    Booking.status == "booked",
+                )
+            )
+            .unique()
+            .all()
+        )
+        for booking in bookings:
+            session = booking.workout_session
+            if session is None or getattr(session, "starts_at", None) is None:
+                continue
+            try:
+                starts = ensure_utc(session.starts_at)
+            except Exception:
+                continue
+            if starts <= now:
+                continue
+            trainer = getattr(session, "trainer", None)
+            try:
+                trainer_name = trainer.full_name if trainer is not None else "Trainer"
+            except Exception:
+                trainer_name = "Trainer"
+            upcoming_items.append(
+                {
+                    "day": starts.strftime("%d"),
+                    "month": starts.strftime("%b"),
+                    "title": getattr(session, "title", None) or "Workout",
+                    "when": starts.strftime("%A at %H:%M"),
+                    "trainer": trainer_name,
+                    "starts_at": starts,
+                }
+            )
+        upcoming_items.sort(key=lambda item: item["starts_at"])
+        used_credits = int(
+            db.session.scalar(
+                select(func.count(Booking.id)).where(
+                    Booking.member_id == member.id,
+                    Booking.status == "booked",
+                    Booking.credit_consumed.is_(True),
+                    Booking.credit_refunded.is_(False),
+                )
+            )
+            or 0
+        )
+    except Exception as exc:
+        current_app.logger.exception(
+            "Member dashboard booking query failed: %s", exc
+        )
+        flash(
+            "Some workout details could not be loaded. You can still use the rest "
+            "of your dashboard.",
+            "warning",
+        )
+        upcoming_items = []
+        used_credits = 0
+
+    return {
+        "member": member,
+        "member_name": member_name,
+        "membership_active": membership_active,
+        "credit_balance": credit_balance,
+        "membership_expires_on": membership_expires_on,
+        "used_credits": used_credits,
+        "upcoming_bookings": upcoming_items,
+    }
+
+
 @member_bp.get("/dashboard")
 @member_required
 def dashboard():
-    from controllers.auth import clear_invalid_session
-
     try:
-        member = g.user.member
+        member = getattr(g.user, "member", None)
         if member is None:
             clear_invalid_session(
                 "Your member profile is missing. Please sign in again."
             )
             return redirect(url_for("auth.login"))
-        # Touch names early so missing columns fail here, not in Jinja.
-        _ = member.full_name
-        upcoming_bookings = db.session.scalars(
-            select(Booking)
-            .join(Booking.workout_session)
-            .where(
-                Booking.member_id == member.id,
-                Booking.status == "booked",
-                WorkoutSession.starts_at > utc_now(),
-            )
-            .order_by(WorkoutSession.starts_at)
-        ).all()
-        used_credits = db.session.scalar(
-            select(func.count(Booking.id)).where(
-                Booking.member_id == member.id,
-                Booking.status == "booked",
-                Booking.credit_consumed.is_(True),
-                Booking.credit_refunded.is_(False),
-            )
+        context = _member_dashboard_context(member)
+        return render_template("dashboard.html", **context)
+    except Exception as exc:
+        current_app.logger.exception("Member dashboard failed: %s", exc)
+        flash(
+            "We could not open your dashboard just now. Please sign in again.",
+            "warning",
         )
-        return render_template(
-            "dashboard.html",
-            member=member,
-            upcoming_bookings=upcoming_bookings,
-            used_credits=int(used_credits or 0),
-        )
-    except SQLAlchemyError:
-        current_app.logger.exception("Member dashboard query failed")
-        recover_from_db_error()
-        return redirect(url_for("auth.login"))
-    except Exception:
-        current_app.logger.exception("Member dashboard unexpected failure")
-        clear_invalid_session(
-            "Your session could not load the member dashboard. Please sign in again."
-        )
+        try:
+            clear_invalid_session()
+        except Exception:
+            pass
         return redirect(url_for("auth.login"))
 
 

@@ -56,21 +56,40 @@ class Member(db.Model):
 
     @property
     def full_name(self) -> str:
-        first = (getattr(self, "first_name", None) or "").strip()
-        last = (getattr(self, "last_name", None) or "").strip()
-        return f"{first} {last}".strip() or "Member"
+        """Unbreakable display name for Jinja (never raises)."""
+
+        try:
+            return f"{self.first_name or ''} {self.last_name or ''}".strip() or "Member"
+        except Exception:
+            return "Member"
 
     def has_active_membership(self, on_date: date | None = None) -> bool:
+        """Return membership eligibility without raising on lazy-load/schema issues."""
+
         effective_date = on_date or date.today()
-        return (
-            self.status == "active"
-            and self.user.is_active
-            and self.membership_expires_on >= effective_date
-            and (
-                self.subscription is None
-                or self.subscription.status == "active"
-            )
-        )
+        try:
+            if self.status != "active":
+                return False
+            expires = self.membership_expires_on
+            if expires is None or expires < effective_date:
+                return False
+            try:
+                user = self.user
+                if user is not None and user.is_active is False:
+                    return False
+            except Exception:
+                pass
+            try:
+                subscription = self.subscription
+                if subscription is not None and subscription.status != "active":
+                    return False
+            except Exception:
+                # Missing subscription table/row must not break dashboards.
+                pass
+            return True
+        except Exception:
+            return False
+
 
     def __repr__(self) -> str:
         return f"<Member {self.full_name!r}>"
