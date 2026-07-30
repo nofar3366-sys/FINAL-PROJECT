@@ -1,5 +1,5 @@
 import os
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 
 from dotenv import load_dotenv
 
@@ -21,6 +21,33 @@ def _is_supabase_pooler_url(url: str) -> bool:
         ":6543" in lowered
         or "pooler.supabase.com" in lowered
         or "pgbouncer=true" in lowered
+    )
+
+
+def build_supabase_pooler_url(
+    project_ref: str,
+    password: str,
+    *,
+    region: str = "eu-central-1",
+    pooler_host: str | None = None,
+) -> str:
+    """Build a Supabase Transaction pooler URI (port 6543) for SQLAlchemy.
+
+    Username format is ``postgres.<project_ref>`` (required by Supabase pooler).
+    Special characters in the password (including ``%``) are URL-encoded.
+    """
+
+    ref = project_ref.strip()
+    raw_password = password.strip()
+    if not ref or not raw_password:
+        return ""
+
+    host = (pooler_host or "").strip() or f"aws-0-{region.strip()}.pooler.supabase.com"
+    encoded_password = quote(raw_password, safe="")
+    user = f"postgres.{ref}"
+    return (
+        f"postgresql://{user}:{encoded_password}@{host}:6543/postgres"
+        f"?sslmode=require"
     )
 
 
@@ -51,20 +78,37 @@ def normalize_database_url(url: str) -> str:
     parsed = urlparse(value)
     query = dict(parse_qsl(parsed.query, keep_blank_values=True))
     query.setdefault("sslmode", "require")
-    if _is_supabase_pooler_url(value):
-        # Helps some tooling identify transaction-pooler usage.
-        query.setdefault("pgbouncer", "true")
+    # psycopg rejects unknown libpq options such as Prisma's pgbouncer=true.
+    query.pop("pgbouncer", None)
 
-    value = urlunparse(parsed._replace(query=urlencode(query)))
-    return value
+    return urlunparse(parsed._replace(query=urlencode(query)))
 
 
 def resolve_database_uri() -> str:
-    """Prefer DATABASE_URL (Supabase/Postgres); fall back to local SQLite."""
+    """Resolve Postgres URI from DATABASE_URL or Supabase pooler parts.
 
-    configured = normalize_database_url(os.environ.get("DATABASE_URL", ""))
-    if configured:
-        return configured
+    Priority:
+    1. ``DATABASE_URL``
+    2. Built from ``SUPABASE_PROJECT_REF`` + ``SUPABASE_DB_PASSWORD``
+       (+ optional ``SUPABASE_REGION`` / ``SUPABASE_POOLER_HOST``)
+    3. Local SQLite fallback
+    """
+
+    explicit = normalize_database_url(os.environ.get("DATABASE_URL", ""))
+    if explicit:
+        return explicit
+
+    project_ref = os.environ.get("SUPABASE_PROJECT_REF", "").strip()
+    password = os.environ.get("SUPABASE_DB_PASSWORD", "").strip()
+    if project_ref and password:
+        built = build_supabase_pooler_url(
+            project_ref,
+            password,
+            region=os.environ.get("SUPABASE_REGION", "eu-central-1"),
+            pooler_host=os.environ.get("SUPABASE_POOLER_HOST") or None,
+        )
+        return normalize_database_url(built)
+
     return "sqlite:///fitness_studio.db"
 
 
@@ -79,26 +123,20 @@ def sqlalchemy_engine_options(database_uri: str) -> dict:
     # NullPool avoids sticky connections across Vercel serverless invocations.
     from sqlalchemy.pool import NullPool
 
-    connect_args: dict = {"connect_timeout": 10}
-    # Critical for Supabase transaction pooler (PgBouncer on :6543):
-    # disable server-side prepared statements (psycopg3).
-    if _is_supabase_pooler_url(database_uri) or ":6543" in database_uri:
-        connect_args["prepare_threshold"] = None
-    else:
-        # Safe default for serverless Postgres even on direct connections.
-        connect_args["prepare_threshold"] = None
-
     options["poolclass"] = NullPool
-    options["connect_args"] = connect_args
+    options["connect_args"] = {
+        "connect_timeout": 15,
+        # Critical for Supabase transaction pooler (PgBouncer on :6543).
+        "prepare_threshold": None,
+    }
     return options
 
 
 class Config:
     """Base application configuration.
 
-    Production and Vercel should set DATABASE_URL to the Supabase
-    **Transaction pooler** URI (port 6543). Local development falls back to
-    instance SQLite when DATABASE_URL is unset.
+    Prefer Supabase Transaction pooler (port 6543) via DATABASE_URL.
+    Local development falls back to instance SQLite when no cloud URI is set.
     """
 
     SECRET_KEY = os.environ.get("SECRET_KEY", "development-only-change-me")

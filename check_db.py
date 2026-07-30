@@ -1,39 +1,68 @@
-"""Quick connectivity check against DATABASE_URL (pooler-friendly).
+"""Verify DATABASE_URL / Supabase pooler settings without starting the web server.
 
 Usage:
   .\\venv\\Scripts\\python.exe check_db.py
 """
 
 import os
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
-# Prefer the real env/.env value. Do not hard-code secrets here.
-if not os.environ.get("DATABASE_URL"):
-    raise SystemExit(
-        "DATABASE_URL is not set. Put your Supabase Transaction pooler URI "
-        "(port 6543) in .env or the environment."
-    )
+from fitness_studio.config import (  # noqa: E402
+    build_supabase_pooler_url,
+    normalize_database_url,
+    resolve_database_uri,
+    sqlalchemy_engine_options,
+)
 
-from fitness_studio.config import normalize_database_url, sqlalchemy_engine_options
-from fitness_studio import create_app
-from models import db
-from sqlalchemy import text
 
-uri = normalize_database_url(os.environ["DATABASE_URL"])
-print("Using driver:", uri.split("://", 1)[0])
-print("Pooler mode:", ":6543" in uri or "pooler.supabase.com" in uri)
-print("Engine options keys:", sorted(sqlalchemy_engine_options(uri).keys()))
+def _redact(uri: str) -> str:
+    parts = urlsplit(uri)
+    if "@" not in parts.netloc:
+        return uri
+    auth, host = parts.netloc.rsplit("@", 1)
+    user = auth.split(":", 1)[0]
+    return parts._replace(netloc=f"{user}:***@{host}").geturl()
+
+
+built = build_supabase_pooler_url(
+    os.environ.get("SUPABASE_PROJECT_REF", ""),
+    os.environ.get("SUPABASE_DB_PASSWORD", ""),
+    region=os.environ.get("SUPABASE_REGION", "eu-central-1"),
+)
+uri = resolve_database_uri()
+opts = sqlalchemy_engine_options(uri)
+
+print("Resolved URI:", _redact(uri))
+print("Driver:", uri.split("://", 1)[0])
+print("Port 6543:", ":6543" in uri)
+print("Pooler host:", "pooler.supabase.com" in uri)
+print("prepare_threshold:", opts.get("connect_args", {}).get("prepare_threshold"))
+print("poolclass:", getattr(opts.get("poolclass"), "__name__", None))
+if built:
+    print("Built from parts:", _redact(normalize_database_url(built)))
+
+if uri.startswith("sqlite"):
+    raise SystemExit("No Supabase DATABASE_URL configured.")
+
+from fitness_studio import create_app  # noqa: E402
+from models import db  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 
 app = create_app()
 with app.app_context():
     try:
         db.session.execute(text("SELECT 1"))
         db.create_all()
-        print("SUCCESS: Connected via DATABASE_URL and ensured tables exist.")
+        print("SUCCESS: Connected and ensured tables exist.")
         print("Dialect:", db.engine.dialect.name)
     except Exception as exc:
-        print(f"ERROR: Failed to connect or create tables: {exc}")
+        print(f"ERROR: {exc}")
+        print(
+            "If you see tenant/user ENOTFOUND, copy the exact Transaction "
+            "pooler URI (including aws-0-REGION) from the Supabase dashboard."
+        )
         raise SystemExit(1) from exc
