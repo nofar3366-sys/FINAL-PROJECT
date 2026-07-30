@@ -1,3 +1,4 @@
+import tempfile
 from pathlib import Path
 
 import click
@@ -5,8 +6,7 @@ from flask import Flask
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-# Import the models package so every table is registered on db.Model.metadata
-# before db.create_all() runs.
+# Register every model on db.Model.metadata before create_all().
 import models  # noqa: F401
 from controllers.auth import auth_bp
 from controllers.core import core_bp
@@ -21,14 +21,43 @@ from services.email_service import ReceiptEmailService
 from services.membership_service import ensure_default_plans
 from services.schema_service import upgrade_trainer_accounts
 
-from .config import Config, sqlalchemy_engine_options
+from .config import Config, is_vercel_runtime, sqlalchemy_engine_options
+
+
+def _writable_instance_path(project_root: Path) -> Path:
+    """Return a writable absolute instance directory.
+
+    Vercel's deployment filesystem is read-only except the OS temp dir, so
+    creating project_root/instance there raises PermissionError and prevents
+    `app.py` from importing.
+    """
+
+    candidates = []
+    if is_vercel_runtime():
+        candidates.append(Path(tempfile.gettempdir()).resolve() / "fitness_studio_instance")
+    candidates.append((project_root / "instance").resolve())
+    candidates.append(Path(tempfile.gettempdir()).resolve() / "fitness_studio_instance")
+
+    last_error: OSError | None = None
+    for path in candidates:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            probe = path / ".write_probe"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            return path
+        except OSError as exc:
+            last_error = exc
+            continue
+    raise RuntimeError(
+        f"Could not create a writable Flask instance path. Last error: {last_error}"
+    )
 
 
 def create_app(test_config: dict | None = None) -> Flask:
     package_dir = Path(__file__).resolve().parent
     project_root = package_dir.parent
-    instance_path = (project_root / "instance").resolve()
-    instance_path.mkdir(parents=True, exist_ok=True)
+    instance_path = _writable_instance_path(project_root)
 
     app = Flask(
         __name__,
@@ -91,7 +120,10 @@ def _bootstrap_database(app: Flask) -> None:
             "applied" if seeded else "skipped (already populated)",
         )
     except Exception:
-        db.session.rollback()
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
         app.logger.exception(
             "Database bootstrap failed. Check DATABASE_URL / Supabase connectivity."
         )

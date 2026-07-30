@@ -44,8 +44,10 @@ def sqlalchemy_engine_options(database_uri: str) -> dict:
     if database_uri.startswith("sqlite"):
         options["connect_args"] = {"timeout": 10}
     else:
-        # Small pool for Vercel serverless + Supabase.
-        options.update({"pool_size": 1, "max_overflow": 0, "pool_recycle": 280})
+        # NullPool avoids sticky connections across Vercel serverless invocations.
+        from sqlalchemy.pool import NullPool
+
+        options["poolclass"] = NullPool
         options["connect_args"] = {"connect_timeout": 10}
     return options
 
