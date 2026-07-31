@@ -59,6 +59,175 @@ def ensure_demo_data() -> bool:
     return True
 
 
+def ensure_presentation_seed() -> dict[str, object]:
+    """Idempotent demo catalog: plans, trainers, and upcoming classes.
+
+    Safe to run on every cold start (including Vercel SQLite). Unlike
+    ``seed_demo_data``, this does not require an empty database — demo
+    accounts may already exist from ``ensure_demo_accounts``.
+    """
+
+    from services.membership_service import ensure_default_plans
+    from services.schema_service import ensure_demo_accounts
+
+    report: dict[str, object] = {
+        "plans": False,
+        "accounts": {},
+        "trainers_added": 0,
+        "sessions_added": 0,
+    }
+
+    ensure_default_plans()
+    report["plans"] = True
+
+    report["accounts"] = ensure_demo_accounts()
+
+    # Extra trainers beyond Maya so managers can schedule varied classes.
+    extra_trainers = (
+        ("noam@fitness.local", "Noam", "Levi", "Strength Training"),
+        ("rina@fitness.local", "Rina", "Azulay", "Cardio and HIIT"),
+    )
+    for email, first_name, last_name, specialty in extra_trainers:
+        created = _ensure_trainer_login(
+            email, first_name=first_name, last_name=last_name, specialty=specialty
+        )
+        if created:
+            report["trainers_added"] = int(report["trainers_added"]) + 1
+
+    # Ben: active member with 0 credits (shows renewal UX).
+    ben_user = db.session.scalar(
+        select(User).where(User.email == "ben@fitness.local")
+    )
+    if ben_user is None:
+        ben_user = _new_user("ben@fitness.local")
+        db.session.add(ben_user)
+        db.session.flush()
+    if ben_user.member is None:
+        db.session.add(
+            Member(
+                user=ben_user,
+                first_name="Ben",
+                last_name="Zero Credit",
+                phone="050-555-0102",
+                membership_expires_on=date.today() + timedelta(days=60),
+                credit_balance=0,
+                status="active",
+            )
+        )
+
+    session_count = db.session.scalar(select(func.count(WorkoutSession.id))) or 0
+    if session_count == 0:
+        report["sessions_added"] = _seed_upcoming_sessions()
+
+    db.session.commit()
+    return report
+
+
+def _ensure_trainer_login(
+    email: str,
+    *,
+    first_name: str,
+    last_name: str,
+    specialty: str,
+) -> bool:
+    """Create trainer user+profile if missing. Returns True when newly created."""
+
+    normalized = User.normalize_email(email)
+    user = db.session.scalar(select(User).where(User.email == normalized))
+    created = False
+    if user is None:
+        user = _new_user(normalized, role="trainer")
+        db.session.add(user)
+        db.session.flush()
+        created = True
+    else:
+        user.role = "trainer"
+        user.is_active = True
+
+    if user.trainer is None:
+        db.session.add(
+            Trainer(
+                user=user,
+                first_name=first_name,
+                last_name=last_name,
+                specialty=specialty,
+                email=normalized,
+                phone="",
+                is_active=True,
+            )
+        )
+        db.session.flush()
+        created = True
+    else:
+        trainer = user.trainer
+        trainer.is_active = True
+        if not (trainer.first_name or "").strip():
+            trainer.first_name = first_name
+        if not (trainer.last_name or "").strip():
+            trainer.last_name = last_name
+        trainer.specialty = specialty or trainer.specialty
+    return created
+
+
+def _seed_upcoming_sessions() -> int:
+    """Insert a small set of bookable demo classes. Returns rows added."""
+
+    trainers = {
+        t.email: t
+        for t in db.session.scalars(select(Trainer).where(Trainer.is_active.is_(True)))
+        if t.email
+    }
+    yoga = trainers.get("maya@fitness.local")
+    strength = trainers.get("noam@fitness.local")
+    cardio = trainers.get("rina@fitness.local")
+    if yoga is None and trainers:
+        yoga = next(iter(trainers.values()))
+    if strength is None:
+        strength = yoga
+    if cardio is None:
+        cardio = yoga
+    if yoga is None:
+        return 0
+
+    sessions = [
+        WorkoutSession(
+            trainer=yoga,
+            title="Morning Yoga",
+            starts_at=_future_at(2, 8),
+            duration_minutes=60,
+            max_capacity=12,
+            status="scheduled",
+        ),
+        WorkoutSession(
+            trainer=strength,
+            title="Functional Strength",
+            starts_at=_future_at(3, 18),
+            duration_minutes=50,
+            max_capacity=10,
+            status="scheduled",
+        ),
+        WorkoutSession(
+            trainer=cardio,
+            title="HIIT Express",
+            starts_at=_future_at(4, 17),
+            duration_minutes=40,
+            max_capacity=14,
+            status="scheduled",
+        ),
+        WorkoutSession(
+            trainer=yoga,
+            title="Evening Mobility",
+            starts_at=_future_at(5, 19),
+            duration_minutes=45,
+            max_capacity=15,
+            status="scheduled",
+        ),
+    ]
+    db.session.add_all(sessions)
+    db.session.flush()
+    return len(sessions)
+
+
 def seed_demo_data() -> None:
     """Insert deterministic demo states into an otherwise empty database."""
 

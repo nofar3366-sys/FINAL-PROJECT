@@ -15,7 +15,11 @@ from controllers.manager import manager_bp
 from controllers.member import member_bp
 from controllers.trainer import trainer_bp
 from models import db
-from models.seed import ensure_demo_data, seed_demo_command
+from models.seed import (
+    ensure_demo_data,
+    ensure_presentation_seed,
+    seed_demo_command,
+)
 from services.ai_service import GroqAIService
 from services.email_service import ReceiptEmailService
 from services.membership_service import ensure_default_plans
@@ -231,35 +235,33 @@ def _bootstrap_database(app: Flask) -> None:
             app.logger.exception("db.create_all failed during bootstrap")
             _rollback()
 
-        # Fast path on Vercel: schema + demo logins only (no heavy demo seed).
-        if is_vercel_runtime():
-            try:
-                ensure_name_columns()
-            except Exception:
-                app.logger.exception("ensure_name_columns failed during bootstrap")
-                _rollback()
-            try:
-                accounts = ensure_demo_accounts()
-            except Exception:
-                app.logger.exception("ensure_demo_accounts failed during bootstrap")
-                _rollback()
-                accounts = {}
-            app.logger.info(
-                "Vercel SQLite bootstrap complete. Accounts: %s", accounts
-            )
-            return
-
         try:
             ensure_name_columns()
         except Exception:
             app.logger.exception("ensure_name_columns failed during bootstrap")
             _rollback()
 
+        # Idempotent catalog: plans + trainers + upcoming classes.
+        # Critical on Vercel SQLite where each cold start may get a fresh /tmp DB.
+        presentation = {}
         try:
-            ensure_demo_accounts()
+            presentation = ensure_presentation_seed()
         except Exception:
-            app.logger.exception("ensure_demo_accounts failed during bootstrap")
+            app.logger.exception("ensure_presentation_seed failed during bootstrap")
             _rollback()
+            try:
+                ensure_default_plans()
+                ensure_demo_accounts()
+            except Exception:
+                app.logger.exception("Fallback plans/accounts ensure failed")
+                _rollback()
+
+        if is_vercel_runtime():
+            app.logger.info(
+                "Vercel SQLite bootstrap complete. Presentation seed: %s",
+                presentation,
+            )
+            return
 
         try:
             repair_report = repair_database()
@@ -268,12 +270,6 @@ def _bootstrap_database(app: Flask) -> None:
             app.logger.exception("repair_database failed during bootstrap")
             _rollback()
             repair_report = {}
-
-        try:
-            ensure_default_plans()
-        except Exception:
-            app.logger.exception("ensure_default_plans failed during bootstrap")
-            _rollback()
 
         try:
             if db.engine.dialect.name == "sqlite":
@@ -290,9 +286,10 @@ def _bootstrap_database(app: Flask) -> None:
             seeded = False
             _rollback()
 
-        demo_accounts = {}
+        demo_accounts = (presentation or {}).get("accounts") or {}
         try:
-            demo_accounts = (repair_report or {}).get("demo_accounts", {}) or {}
+            if not demo_accounts:
+                demo_accounts = (repair_report or {}).get("demo_accounts", {}) or {}
             if not demo_accounts:
                 demo_accounts = ensure_demo_accounts()
         except Exception:
@@ -304,11 +301,11 @@ def _bootstrap_database(app: Flask) -> None:
         except Exception:
             dialect_name = "unknown"
         app.logger.info(
-            "Database bootstrap complete (%s / %s). Demo seed %s. Accounts: %s.",
+            "Database bootstrap complete (%s / %s). Full seed %s. Presentation: %s.",
             dialect_name,
             app.config.get("DATABASE_SOURCE"),
-            "applied" if seeded else "skipped/failed",
-            demo_accounts,
+            "applied" if seeded else "skipped/partial",
+            presentation or demo_accounts,
         )
     except Exception:
         _rollback()

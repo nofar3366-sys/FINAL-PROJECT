@@ -40,6 +40,13 @@
                 </div>
             </div>
         </div>
+    {% else %}
+        <div class="col-lg-8">
+            <div class="alert alert-warning">
+                Membership plans are still loading. Refresh this page in a moment.
+                Demo accounts: <code>alice@fitness.local</code> / <code>Demo123!</code>
+            </div>
+        </div>
     {% endfor %}
 </div>
 <p class="small text-secondary text-center mt-4">Academic demo only — no real payment is processed. Without a Resend key, the receipt is safely logged.</p>

@@ -53,6 +53,30 @@ def repair_database(default_password: str = DEMO_PASSWORD) -> dict[str, object]:
         except Exception:
             pass
 
+    try:
+        from models.seed import ensure_presentation_seed
+
+        report["presentation"] = ensure_presentation_seed()
+        report["steps"].append("ensure_presentation_seed")
+    except Exception as exc:
+        logger.exception("ensure_presentation_seed failed during repair")
+        report["presentation_error"] = str(exc)
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        try:
+            from services.membership_service import ensure_default_plans
+
+            ensure_default_plans()
+            report["steps"].append("ensure_default_plans")
+        except Exception:
+            logger.exception("ensure_default_plans failed during repair fallback")
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+
     report["ok"] = "ensure_name_columns" in report["steps"]
     return report
 

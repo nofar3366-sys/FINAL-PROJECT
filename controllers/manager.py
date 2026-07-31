@@ -324,17 +324,44 @@ def activate_trainer(trainer_id: int):
     return redirect(url_for("manager.trainer_detail", trainer_id=trainer.id))
 
 
+def _active_trainers():
+    trainers = db.session.scalars(
+        select(Trainer)
+        .where(Trainer.is_active.is_(True))
+        .order_by(Trainer.first_name, Trainer.last_name)
+    ).all()
+    if trainers:
+        return trainers
+    try:
+        from models.seed import ensure_presentation_seed
+
+        ensure_presentation_seed()
+    except Exception:
+        current_app.logger.exception("Failed to seed trainers for session UI")
+    return db.session.scalars(
+        select(Trainer)
+        .where(Trainer.is_active.is_(True))
+        .order_by(Trainer.first_name, Trainer.last_name)
+    ).all()
+
+
 @manager_bp.get("/sessions")
 @manager_required
 def sessions():
     workout_sessions = db.session.scalars(
         select(WorkoutSession).order_by(WorkoutSession.starts_at)
     ).all()
-    trainers = db.session.scalars(
-        select(Trainer)
-        .where(Trainer.is_active.is_(True))
-        .order_by(Trainer.first_name, Trainer.last_name)
-    ).all()
+    if not workout_sessions:
+        try:
+            from models.seed import ensure_presentation_seed
+
+            ensure_presentation_seed()
+            workout_sessions = db.session.scalars(
+                select(WorkoutSession).order_by(WorkoutSession.starts_at)
+            ).all()
+        except Exception:
+            current_app.logger.exception("Failed to seed workout sessions")
+    trainers = _active_trainers()
     return render_template(
         "sessions.html", sessions=workout_sessions, trainers=trainers
     )
@@ -343,26 +370,28 @@ def sessions():
 @manager_bp.route("/sessions/new", methods=("GET", "POST"))
 @manager_required
 def new_session():
-    trainers = db.session.scalars(
-        select(Trainer)
-        .where(Trainer.is_active.is_(True))
-        .order_by(Trainer.first_name, Trainer.last_name)
-    ).all()
+    trainers = _active_trainers()
     if request.method == "POST":
         validate_csrf()
         try:
+            raw_starts = (request.form.get("starts_at") or "").strip()
+            if not raw_starts:
+                raise ValueError("Choose a date and time for the session.")
             create_session(
-                trainer_id=int(request.form.get("trainer_id", "0")),
+                trainer_id=int(request.form.get("trainer_id") or "0"),
                 title=request.form.get("title", ""),
-                starts_at=ensure_utc(
-                    datetime.fromisoformat(request.form.get("starts_at", ""))
-                ),
-                duration_minutes=int(request.form.get("duration_minutes", "60")),
-                max_capacity=int(request.form.get("max_capacity", "0")),
+                starts_at=ensure_utc(datetime.fromisoformat(raw_starts)),
+                duration_minutes=int(request.form.get("duration_minutes") or "60"),
+                max_capacity=int(request.form.get("max_capacity") or "0"),
             )
         except (ValueError, SchedulingError) as exc:
             db.session.rollback()
             flash(str(exc), "danger")
+        except Exception as exc:
+            # Do not treat form/scheduling bugs as a "database repair" logout.
+            db.session.rollback()
+            current_app.logger.exception("Create session failed")
+            flash(f"Could not create the session: {exc}", "danger")
         else:
             flash("Workout session created.", "success")
             return redirect(url_for("manager.sessions"))

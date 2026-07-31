@@ -208,6 +208,19 @@ def renewal():
         .where(MembershipPlan.is_active.is_(True))
         .order_by(MembershipPlan.price_cents)
     ).all()
+    if not plans:
+        # Self-heal empty catalogs (fresh Vercel SQLite / missed bootstrap).
+        try:
+            from services.membership_service import ensure_default_plans
+
+            ensure_default_plans()
+            plans = db.session.scalars(
+                select(MembershipPlan)
+                .where(MembershipPlan.is_active.is_(True))
+                .order_by(MembershipPlan.price_cents)
+            ).all()
+        except Exception:
+            current_app.logger.exception("Failed to ensure membership plans")
     return render_template("renewal.html", member=member, plans=plans)
 
 
