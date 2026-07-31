@@ -2,7 +2,7 @@ import tempfile
 from pathlib import Path
 
 import click
-from flask import Flask, flash, redirect, session, url_for
+from flask import Flask, flash, redirect, url_for
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -98,33 +98,21 @@ def create_app(test_config: dict | None = None) -> Flask:
             "sqlite" if uri.startswith("sqlite") else "postgres"
         )
     else:
-        # Probe configured Postgres; if unreachable, fall back to SQLite so the
-        # Vercel demo never hard-crashes on a bad DATABASE_URL / tenant.
-        try:
-            uri, source = resolve_runtime_database_uri(instance_path)
-        except Exception:
-            app.logger.exception("resolve_runtime_database_uri failed; using SQLite")
-            from .config import sqlite_fallback_uri
-
-            uri, source = sqlite_fallback_uri(instance_path), "sqlite-forced"
+        # Production is strict: a missing/bad DATABASE_URL must never redirect
+        # writes into Vercel's ephemeral filesystem.
+        uri, source = resolve_runtime_database_uri(instance_path)
         app.config["SQLALCHEMY_DATABASE_URI"] = uri
         app.config["SQLALCHEMY_ENGINE_OPTIONS"] = sqlalchemy_engine_options(uri)
         app.config["DATABASE_SOURCE"] = source
-        if source in {"sqlite-fallback", "sqlite-forced"}:
-            app.logger.error(
-                "Using SQLite (%s) at %s. Configure a valid DATABASE_URL "
-                "when Supabase is available.",
-                source,
-                uri,
-            )
 
     if is_vercel_runtime():
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
     db.init_app(app)
 
-    # On Vercel, bootstrap SQLite on the first request so module import stays
-    # under the platform kill threshold. Register BEFORE blueprints/auth.
+    # Validate the production connection on the first request, not at import.
+    # Schema provisioning is an explicit deployment operation, so every cold
+    # start does not run DDL or demo writes against Supabase.
     if test_config is None and is_vercel_runtime():
 
         @app.before_request
@@ -191,13 +179,11 @@ def _register_error_handlers(app: Flask) -> None:
                 repair_database()
             except Exception:
                 app.logger.exception("Error-handler repair_database failed")
-        session.clear()
         flash(
-            "A database problem was detected. Please sign in again. "
-            "If this continues, the studio database may be unavailable.",
+            "A database operation failed and was rolled back. Please try again.",
             "warning",
         )
-        return redirect(url_for("auth.login"))
+        return redirect(url_for("core.index"))
 
     @app.errorhandler(Exception)
     def handle_any_exception(exc):
@@ -211,12 +197,11 @@ def _register_error_handlers(app: Flask) -> None:
             db.session.rollback()
         except Exception:
             pass
-        session.clear()
         flash(
-            "Something went wrong while loading that page. Please sign in again.",
+            "Something went wrong while loading that page. Please try again.",
             "danger",
         )
-        return redirect(url_for("auth.login"))
+        return redirect(url_for("core.index"))
 
 
 def _bootstrap_database(app: Flask) -> None:
@@ -229,6 +214,14 @@ def _bootstrap_database(app: Flask) -> None:
             pass
 
     try:
+        if is_vercel_runtime():
+            # Strict readiness check only. DDL/seed work is performed before
+            # deployment against the same persistent Supabase database.
+            db.session.execute(text("SELECT 1"))
+            db.session.rollback()
+            app.logger.info("Supabase production connection verified.")
+            return
+
         try:
             db.create_all()
         except Exception:
@@ -255,13 +248,6 @@ def _bootstrap_database(app: Flask) -> None:
             except Exception:
                 app.logger.exception("Fallback plans/accounts ensure failed")
                 _rollback()
-
-        if is_vercel_runtime():
-            app.logger.info(
-                "Vercel SQLite bootstrap complete. Presentation seed: %s",
-                presentation,
-            )
-            return
 
         try:
             repair_report = repair_database()

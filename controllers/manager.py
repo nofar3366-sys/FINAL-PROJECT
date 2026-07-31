@@ -14,6 +14,7 @@ from flask import (
 )
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.orm import joinedload, selectinload
 
 from controllers.auth import manager_required, validate_csrf
 from controllers.safe_db import recover_from_db_error
@@ -21,13 +22,13 @@ from models import (
     Booking,
     Member,
     MembershipPurchase,
+    MembershipSubscription,
     Trainer,
     User,
     WorkoutSession,
     db,
 )
 from models.time_utils import ensure_utc
-from services.ai_service import AIServiceError
 from services.membership_service import (
     MembershipPurchaseError,
     set_subscription_status,
@@ -35,7 +36,9 @@ from services.membership_service import (
 from services.scheduling_service import (
     SchedulingError,
     cancel_session,
+    create_fallback_workout_sessions,
     create_session,
+    validate_schedule_payload,
 )
 from skills.scheduling import schedule_recurring_sessions_skill
 
@@ -108,7 +111,9 @@ def new_member():
         values, error = _member_form_values(require_password=True)
         if error:
             flash(error, "danger")
-        elif db.session.scalar(select(User.id).where(User.email == values["email"])):
+        elif db.session.scalar(
+            select(User.id).where(func.lower(User.email) == values["email"])
+        ):
             flash("An account with this email already exists.", "danger")
         else:
             user = User(
@@ -154,7 +159,8 @@ def edit_member(member_id: int):
         duplicate = (
             db.session.scalar(
                 select(User.id).where(
-                    User.email == values["email"], User.id != member.user_id
+                    func.lower(User.email) == values["email"],
+                    User.id != member.user_id,
                 )
             )
             if not error
@@ -232,6 +238,10 @@ def new_trainer():
         values, password, error = _trainer_form_values(require_password=True)
         if error:
             flash(error, "danger")
+        elif db.session.scalar(
+            select(User.id).where(func.lower(User.email) == values["email"])
+        ):
+            flash("A trainer with this email already exists.", "danger")
         else:
             user = User(email=values["email"], role="trainer", is_active=values["is_active"])
             user.set_password(password)
@@ -267,8 +277,20 @@ def edit_trainer(trainer_id: int):
         values, password, error = _trainer_form_values(
             require_password=trainer.user is None
         )
+        duplicate = (
+            db.session.scalar(
+                select(User.id).where(
+                    func.lower(User.email) == values["email"],
+                    User.id != (trainer.user_id or 0),
+                )
+            )
+            if not error
+            else None
+        )
         if error:
             flash(error, "danger")
+        elif duplicate:
+            flash("A trainer with this email already exists.", "danger")
         else:
             for field, value in values.items():
                 setattr(trainer, field, value)
@@ -325,19 +347,6 @@ def activate_trainer(trainer_id: int):
 
 
 def _active_trainers():
-    trainers = db.session.scalars(
-        select(Trainer)
-        .where(Trainer.is_active.is_(True))
-        .order_by(Trainer.first_name, Trainer.last_name)
-    ).all()
-    if trainers:
-        return trainers
-    try:
-        from models.seed import ensure_presentation_seed
-
-        ensure_presentation_seed()
-    except Exception:
-        current_app.logger.exception("Failed to seed trainers for session UI")
     return db.session.scalars(
         select(Trainer)
         .where(Trainer.is_active.is_(True))
@@ -349,18 +358,13 @@ def _active_trainers():
 @manager_required
 def sessions():
     workout_sessions = db.session.scalars(
-        select(WorkoutSession).order_by(WorkoutSession.starts_at)
+        select(WorkoutSession)
+        .options(
+            joinedload(WorkoutSession.trainer),
+            selectinload(WorkoutSession.bookings),
+        )
+        .order_by(WorkoutSession.starts_at)
     ).all()
-    if not workout_sessions:
-        try:
-            from models.seed import ensure_presentation_seed
-
-            ensure_presentation_seed()
-            workout_sessions = db.session.scalars(
-                select(WorkoutSession).order_by(WorkoutSession.starts_at)
-            ).all()
-        except Exception:
-            current_app.logger.exception("Failed to seed workout sessions")
     trainers = _active_trainers()
     return render_template(
         "sessions.html", sessions=workout_sessions, trainers=trainers
@@ -416,26 +420,46 @@ def cancel_workout_session(session_id: int):
 def ai_schedule():
     validate_csrf()
     prompt = request.form.get("prompt", "").strip()
-    trainers = db.session.scalars(
-        select(Trainer).where(Trainer.is_active.is_(True))
-    ).all()
+    trainers = _active_trainers()
+    if not trainers:
+        flash("AI scheduling requires at least one active trainer.", "danger")
+        return redirect(url_for("manager.sessions"))
+
     trainer_names = [trainer.full_name for trainer in trainers]
     try:
         parsed = current_app.extensions["ai_service"].parse_schedule_command(
             prompt, trainer_names
         )
+        schedule = validate_schedule_payload(parsed, trainers)
         result = schedule_recurring_sessions_skill(
-            trainer_name=str(parsed["trainer_name"]),
-            title=str(parsed["title"]),
-            weekday=str(parsed["weekday"]),
-            start_time=str(parsed["start_time"]),
-            max_capacity=int(parsed["max_capacity"]),
-            occurrences=4,
-            duration_minutes=int(parsed.get("duration_minutes", 60)),
+            trainer_name=str(schedule["trainer_name"]),
+            title=str(schedule["title"]),
+            weekday=str(schedule["weekday"]),
+            start_time=str(schedule["start_time"]),
+            max_capacity=int(schedule["max_capacity"]),
+            occurrences=int(schedule["occurrences"]),
+            duration_minutes=int(schedule["duration_minutes"]),
         )
-    except (KeyError, TypeError, ValueError, AIServiceError, SchedulingError) as exc:
+    except Exception as exc:  # LLM/network/JSON/conflict/DB are all contained.
         db.session.rollback()
-        flash(f"AI scheduling failed: {exc}", "danger")
+        current_app.logger.exception(
+            "AI schedule generation failed; attempting deterministic fallback"
+        )
+        try:
+            session_ids = create_fallback_workout_sessions(trainers[0].id)
+        except Exception as fallback_exc:
+            db.session.rollback()
+            current_app.logger.exception("Fallback workout generation failed")
+            flash(
+                f"Could not generate workouts: {fallback_exc}",
+                "danger",
+            )
+        else:
+            flash(
+                "The AI service was unavailable, so "
+                f"{len(session_ids)} realistic demo workouts were created instead.",
+                "warning",
+            )
     else:
         flash(
             f"AI scheduling created {result['created_count']} weekly sessions.",
@@ -448,7 +472,14 @@ def ai_schedule():
 @manager_required
 def subscriptions():
     members = db.session.scalars(
-        select(Member).order_by(Member.first_name, Member.last_name)
+        select(Member)
+        .options(
+            joinedload(Member.user),
+            joinedload(Member.subscription).joinedload(
+                MembershipSubscription.plan
+            ),
+        )
+        .order_by(Member.first_name, Member.last_name)
     ).all()
     return render_template("subscriptions.html", members=members)
 
@@ -472,10 +503,20 @@ def reports_csv():
     output = StringIO()
     writer = csv.writer(output)
     purchases = db.session.scalars(
-        select(MembershipPurchase).order_by(MembershipPurchase.purchased_at)
+        select(MembershipPurchase)
+        .options(
+            joinedload(MembershipPurchase.member),
+            joinedload(MembershipPurchase.plan),
+        )
+        .order_by(MembershipPurchase.purchased_at)
     ).all()
     workout_sessions = db.session.scalars(
-        select(WorkoutSession).order_by(WorkoutSession.starts_at)
+        select(WorkoutSession)
+        .options(
+            joinedload(WorkoutSession.trainer),
+            selectinload(WorkoutSession.bookings),
+        )
+        .order_by(WorkoutSession.starts_at)
     ).all()
 
     writer.writerow(["Fitness Studio Operational Report"])

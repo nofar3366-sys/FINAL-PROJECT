@@ -55,3 +55,4 @@ build/
 /dep_url.txt
 /tmp_body.txt
 
+.vercel/

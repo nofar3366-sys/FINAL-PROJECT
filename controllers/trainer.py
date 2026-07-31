@@ -12,10 +12,11 @@ from flask import (
 )
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import joinedload, selectinload
 
 from controllers.auth import trainer_required, validate_csrf
 from controllers.safe_db import recover_from_db_error
-from models import Booking, WorkoutSession, db
+from models import Booking, Member, WorkoutSession, db
 from models.time_utils import ensure_utc, utc_now
 from services.scheduling_service import SchedulingError, cancel_session, create_session
 
@@ -29,6 +30,7 @@ def dashboard():
     try:
         sessions = db.session.scalars(
             select(WorkoutSession)
+            .options(selectinload(WorkoutSession.bookings))
             .where(WorkoutSession.trainer_id == g.user.trainer.id)
             .order_by(WorkoutSession.starts_at)
         ).all()
@@ -98,6 +100,7 @@ def participants(session_id: int):
         return "", 403
     bookings = db.session.scalars(
         select(Booking)
+        .options(joinedload(Booking.member).joinedload(Member.user))
         .where(
             Booking.workout_session_id == session_id,
             Booking.status == "booked",

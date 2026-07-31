@@ -79,11 +79,24 @@ def sqlite_fallback_uri(instance_path: str | Path | None = None) -> str:
 
 
 def resolve_database_uri(instance_path: str | Path | None = None) -> str:
-    """Resolve Postgres URI from env, else local/Vercel SQLite."""
+    """Resolve the configured database URI.
+
+    Production must provide ``DATABASE_URL``. SQLite is intentionally limited
+    to local development and tests because Vercel's filesystem is ephemeral.
+    """
 
     explicit = normalize_database_url(os.environ.get("DATABASE_URL", ""))
     if explicit:
+        if not explicit.startswith("postgresql+psycopg://"):
+            raise RuntimeError(
+                "DATABASE_URL must be a PostgreSQL URL using postgresql://."
+            )
         return explicit
+
+    if is_vercel_runtime():
+        raise RuntimeError(
+            "DATABASE_URL is required on Vercel; refusing ephemeral SQLite."
+        )
 
     project_ref = os.environ.get("SUPABASE_PROJECT_REF", "").strip()
     password = os.environ.get("SUPABASE_DB_PASSWORD", "").strip()
@@ -111,8 +124,8 @@ def sqlalchemy_engine_options(database_uri: str) -> dict:
 
     options["poolclass"] = NullPool
     options["connect_args"] = {
-        # Fail fast so Vercel cold starts do not hang on a bad DATABASE_URL.
-        "connect_timeout": 1 if is_vercel_runtime() else 2,
+        # Supabase transaction-pooler compatible and bounded for serverless.
+        "connect_timeout": 5,
         "prepare_threshold": None,
     }
     return options
@@ -164,19 +177,12 @@ def probe_database_uri(database_uri: str, timeout_seconds: float = 3.0) -> bool:
 
 
 def resolve_runtime_database_uri(instance_path: str | Path | None = None) -> tuple[str, str]:
-    """Choose a working DB URI.
+    """Choose the database without silently changing persistence semantics.
 
-    Returns ``(uri, source)`` where source is ``postgres``, ``sqlite-fallback``,
-    ``sqlite-forced``, or ``sqlite``.
-
-    Vercel serverless cold starts must stay under a few seconds. Probing or
-    bootstrapping Supabase from ``create_app()`` regularly takes 20–40s and
-    causes ``FUNCTION_INVOCATION_FAILED``. Therefore Vercel always uses a
-    writable SQLite DB under ``/tmp``. Local/dev can still use Supabase via
-    ``DATABASE_URL``.
-
-    Set ``FORCE_SQLITE=1`` locally to skip Postgres. Set ``USE_POSTGRES=1`` on
-    Vercel only if you accept slower cold starts against a live pooler.
+    A configured PostgreSQL URL is returned directly; probing is deliberately
+    not performed during app import because DNS/network probes can exceed a
+    serverless cold-start deadline. Connection errors remain explicit runtime
+    errors instead of silently writing data to a different SQLite database.
     """
 
     force_sqlite = os.environ.get("FORCE_SQLITE", "").lower() in {
@@ -185,19 +191,17 @@ def resolve_runtime_database_uri(instance_path: str | Path | None = None) -> tup
         "yes",
     } or os.environ.get("USE_SQLITE", "").lower() in {"1", "true", "yes"}
 
-    # Vercel: ALWAYS SQLite. Remote Supabase during cold start causes
-    # FUNCTION_INVOCATION_FAILED (~30s). Local/dev may still use DATABASE_URL.
-    if force_sqlite or is_vercel_runtime():
+    if force_sqlite:
+        if is_vercel_runtime() or os.environ.get("DATABASE_URL", "").strip():
+            raise RuntimeError(
+                "FORCE_SQLITE/USE_SQLITE cannot override production DATABASE_URL."
+            )
         return sqlite_fallback_uri(instance_path), "sqlite-forced"
 
     configured = resolve_database_uri(instance_path)
     if configured.startswith("sqlite"):
         return configured, "sqlite"
-
-    if probe_database_uri(configured, timeout_seconds=3.0):
-        return configured, "postgres"
-
-    return sqlite_fallback_uri(instance_path), "sqlite-fallback"
+    return configured, "postgres"
 
 
 class Config:
@@ -219,7 +223,7 @@ class Config:
 
     GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
     GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-    GROQ_TIMEOUT_SECONDS = float(os.environ.get("GROQ_TIMEOUT_SECONDS", "30"))
+    GROQ_TIMEOUT_SECONDS = float(os.environ.get("GROQ_TIMEOUT_SECONDS", "8"))
 
     RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
     RECEIPT_FROM_EMAIL = os.environ.get(

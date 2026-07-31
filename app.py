@@ -14,17 +14,6 @@ from flask import Flask, jsonify
 
 _ON_VERCEL = os.environ.get("VERCEL") == "1" or bool(os.environ.get("VERCEL_ENV"))
 
-if _ON_VERCEL:
-    for _key in (
-        "DATABASE_URL",
-        "SUPABASE_DB_PASSWORD",
-        "SUPABASE_PROJECT_REF",
-    ):
-        os.environ.pop(_key, None)
-    os.environ["FORCE_SQLITE"] = "1"
-    os.environ["USE_SQLITE"] = "1"
-    os.environ["USE_POSTGRES"] = "0"
-
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "development-only-change-me")
 
@@ -35,15 +24,19 @@ _SHELL_WSGI = None
 
 @app.get("/health")
 def health():
+    ready = not _LOAD_ERROR and (
+        not _ON_VERCEL or bool(os.environ.get("DATABASE_URL"))
+    )
     return jsonify(
         {
-            "status": "ok",
+            "status": "ok" if ready else "degraded",
             "mode": "shell" if _REAL_APP is None else "full",
             "on_vercel": _ON_VERCEL,
+            "database_url_present": bool(os.environ.get("DATABASE_URL")),
             "git_sha": (os.environ.get("VERCEL_GIT_COMMIT_SHA") or "")[:7] or None,
             "load_error": _LOAD_ERROR[:500] if _LOAD_ERROR else None,
         }
-    )
+    ), (200 if ready else 503)
 
 
 def _load_real_app():
@@ -66,10 +59,6 @@ def _load_real_app():
 
 
 def _dispatch(environ, start_response):
-    path = environ.get("PATH_INFO") or "/"
-    if path == "/health":
-        return _SHELL_WSGI(environ, start_response)
-
     real = _load_real_app()
     if real is not None:
         return real(environ, start_response)

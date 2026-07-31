@@ -104,21 +104,30 @@ def set_subscription_status(member_id: int, status: str) -> None:
     if status not in {"active", "suspended", "cancelled"}:
         raise ValueError("Invalid subscription status.")
 
-    member = db.get_or_404(Member, member_id)
-    if member.subscription is None:
-        latest_plan = db.session.scalar(
-            select(MembershipPlan).where(MembershipPlan.is_active.is_(True)).limit(1)
-        )
-        if latest_plan is None:
-            raise MembershipPurchaseError("No membership plan is configured.")
-        member.subscription = MembershipSubscription(
-            plan=latest_plan,
-            status=status,
-            starts_on=date.today(),
-            ends_on=member.membership_expires_on,
-        )
-    else:
-        member.subscription.status = status
+    try:
+        begin_write_transaction()
+        member = db.session.get(Member, member_id, with_for_update=True)
+        if member is None:
+            raise MembershipPurchaseError("Member was not found.")
+        if member.subscription is None:
+            latest_plan = db.session.scalar(
+                select(MembershipPlan)
+                .where(MembershipPlan.is_active.is_(True))
+                .limit(1)
+            )
+            if latest_plan is None:
+                raise MembershipPurchaseError("No membership plan is configured.")
+            member.subscription = MembershipSubscription(
+                plan=latest_plan,
+                status=status,
+                starts_on=date.today(),
+                ends_on=member.membership_expires_on,
+            )
+        else:
+            member.subscription.status = status
 
-    member.status = "active" if status == "active" else "inactive"
-    db.session.commit()
+        member.status = "active" if status == "active" else "inactive"
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise

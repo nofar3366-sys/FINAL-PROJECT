@@ -10,8 +10,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from models import db
 
 
-def recover_from_db_error(message: str | None = None) -> None:
-    """Rollback, optionally repair schema, and clear the auth session."""
+def recover_from_db_error(
+    message: str | None = None, *, clear_auth_session: bool = False
+) -> None:
+    """Rollback a failed unit of work without logging users out by default."""
 
     try:
         db.session.rollback()
@@ -29,7 +31,8 @@ def recover_from_db_error(message: str | None = None) -> None:
             repair_database()
         except Exception:
             current_app.logger.exception("Post-error database repair failed")
-    session.clear()
+    if clear_auth_session:
+        session.clear()
     flash(
         message
         or (
@@ -56,15 +59,15 @@ def db_safe(view):
                 "Database error in %s", getattr(view, "__name__", "view")
             )
             recover_from_db_error()
-            return redirect(url_for("auth.login"))
+            return redirect(url_for("core.index"))
         except Exception:
             # Schema drift / missing columns / orphaned profiles must not 500.
             current_app.logger.exception(
                 "Unexpected error in %s", getattr(view, "__name__", "view")
             )
             recover_from_db_error(
-                "Something went wrong while loading that page. Please sign in again."
+                "Something went wrong while loading that page. Please try again."
             )
-            return redirect(url_for("auth.login"))
+            return redirect(url_for("core.index"))
 
     return wrapped_view

@@ -148,14 +148,10 @@ def dashboard():
     except Exception as exc:
         current_app.logger.exception("Member dashboard failed: %s", exc)
         flash(
-            "We could not open your dashboard just now. Please sign in again.",
+            "We could not open your dashboard just now. Your session is still active.",
             "warning",
         )
-        try:
-            clear_invalid_session()
-        except Exception:
-            pass
-        return redirect(url_for("auth.login"))
+        return redirect(url_for("member.schedule"))
 
 
 @member_bp.get("/schedule")
@@ -208,19 +204,6 @@ def renewal():
         .where(MembershipPlan.is_active.is_(True))
         .order_by(MembershipPlan.price_cents)
     ).all()
-    if not plans:
-        # Self-heal empty catalogs (fresh Vercel SQLite / missed bootstrap).
-        try:
-            from services.membership_service import ensure_default_plans
-
-            ensure_default_plans()
-            plans = db.session.scalars(
-                select(MembershipPlan)
-                .where(MembershipPlan.is_active.is_(True))
-                .order_by(MembershipPlan.price_cents)
-            ).all()
-        except Exception:
-            current_app.logger.exception("Failed to ensure membership plans")
     return render_template("renewal.html", member=member, plans=plans)
 
 
@@ -265,17 +248,40 @@ def purchase():
         return redirect(url_for("member.renewal"))
 
     purchase_record = db.session.get(MembershipPurchase, purchase_id)
-    result = current_app.extensions["receipt_email"].send_receipt(
-        to_email=member.user.email,
-        member_name=member.full_name,
-        plan_name=purchase_record.plan.name,
-        amount_cents=purchase_record.amount_paid_cents,
-        credits=purchase_record.plan.credits,
-        expires_on=member.membership_expires_on.isoformat(),
-    )
-    purchase_record.receipt_status = result.status
-    purchase_record.receipt_reference = result.reference
-    db.session.commit()
+    if purchase_record is None:
+        current_app.logger.error(
+            "Committed purchase %s could not be reloaded", purchase_id
+        )
+        flash(
+            "Purchase completed, but the receipt record could not be loaded.",
+            "warning",
+        )
+        return redirect(url_for("member.renewal"))
+
+    try:
+        result = current_app.extensions["receipt_email"].send_receipt(
+            to_email=member.user.email,
+            member_name=member.full_name,
+            plan_name=purchase_record.plan.name,
+            amount_cents=purchase_record.amount_paid_cents,
+            credits=purchase_record.plan.credits,
+            expires_on=member.membership_expires_on.isoformat(),
+        )
+        purchase_record.receipt_status = result.status
+        purchase_record.receipt_reference = result.reference
+        db.session.commit()
+    except Exception:
+        # The membership purchase is already durable. Receipt bookkeeping must
+        # never roll it back or log the member out.
+        db.session.rollback()
+        current_app.logger.exception(
+            "Purchase %s succeeded but receipt finalization failed", purchase_id
+        )
+        flash(
+            "Purchase completed, but the receipt will need to be retried.",
+            "warning",
+        )
+        return redirect(url_for("member.renewal"))
 
     if result.status == "failed":
         flash("Purchase completed, but the email receipt could not be sent.", "warning")
@@ -301,6 +307,10 @@ def assistant():
     question = request.form.get("question", "").strip()
     sessions = db.session.scalars(
         select(WorkoutSession)
+        .options(
+            joinedload(WorkoutSession.trainer),
+            joinedload(WorkoutSession.bookings),
+        )
         .where(
             WorkoutSession.starts_at > utc_now(),
         )
@@ -427,9 +437,10 @@ def _schedule_data(member_id: int):
             WorkoutSession.starts_at > utc_now(),
         )
         .order_by(WorkoutSession.starts_at)
-    ).all()
+    ).unique().all()
     bookings = db.session.scalars(
         select(Booking)
+        .options(joinedload(Booking.workout_session))
         .where(Booking.member_id == member_id)
         .order_by(Booking.booked_at.desc())
     ).all()

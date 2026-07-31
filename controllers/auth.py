@@ -78,7 +78,8 @@ def load_logged_in_user() -> None:
         current_app.logger.exception("Failed to load session user %s", user_pk)
         recover_from_db_error(
             "Your session could not be loaded because the database schema "
-            "was out of date. Please sign in again."
+            "was out of date. Please sign in again.",
+            clear_auth_session=True,
         )
         g.user = None
         return
@@ -131,7 +132,7 @@ def trainer_required(view):
             trainer = g.user.trainer
         except SQLAlchemyError:
             current_app.logger.exception("Trainer profile lookup failed")
-            recover_from_db_error()
+            recover_from_db_error(clear_auth_session=True)
             return redirect(url_for("auth.login"))
         except Exception:
             current_app.logger.exception("Unexpected trainer guard failure")
@@ -163,7 +164,7 @@ def member_required(view):
             member = g.user.member
         except SQLAlchemyError:
             current_app.logger.exception("Member profile lookup failed")
-            recover_from_db_error()
+            recover_from_db_error(clear_auth_session=True)
             return redirect(url_for("auth.login"))
         except Exception:
             current_app.logger.exception("Unexpected member guard failure")
@@ -307,8 +308,10 @@ def register():
                 credit_balance=0,
                 status="active",
             )
-            db.session.add(member)
+            # Explicitly stage both 1NF records in the same transaction.
+            db.session.add_all([user, member])
             try:
+                db.session.flush()
                 db.session.commit()
             except IntegrityError:
                 db.session.rollback()

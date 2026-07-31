@@ -16,10 +16,10 @@ def book_session(member_id: int, workout_session_id: int) -> None:
 
     try:
         begin_write_transaction()
-        member = db.session.get(Member, member_id, with_for_update=True)
         workout_session = db.session.get(
             WorkoutSession, workout_session_id, with_for_update=True
         )
+        member = db.session.get(Member, member_id, with_for_update=True)
         if member is None or workout_session is None:
             raise BookingError("Member or session was not found.")
         if not member.has_active_membership(date.today()):
@@ -69,19 +69,32 @@ def cancel_booking(member_id: int, booking_id: int) -> None:
     """Cancel a future booking and restore its credit exactly once."""
 
     try:
+        # Read only the parent id, then restart with the same lock order used
+        # by whole-session cancellation: session -> booking -> member.
+        reference = db.session.get(Booking, booking_id)
+        if reference is None or reference.member_id != member_id:
+            raise BookingError("Booking was not found.")
+        workout_session_id = reference.workout_session_id
+
         begin_write_transaction()
+        workout_session = db.session.get(
+            WorkoutSession, workout_session_id, with_for_update=True
+        )
         booking = db.session.get(Booking, booking_id, with_for_update=True)
         if booking is None or booking.member_id != member_id:
             raise BookingError("Booking was not found.")
+        member = db.session.get(Member, member_id, with_for_update=True)
+        if workout_session is None or member is None:
+            raise BookingError("Booking data is no longer available.")
         if booking.status != "booked":
             raise BookingError("This booking is already cancelled.")
-        if ensure_utc(booking.workout_session.starts_at) <= utc_now():
+        if ensure_utc(workout_session.starts_at) <= utc_now():
             raise BookingError("Started sessions cannot be cancelled.")
 
         booking.status = "cancelled"
         booking.cancelled_at = utc_now()
         if booking.credit_consumed and not booking.credit_refunded:
-            booking.member.credit_balance += 1
+            member.credit_balance += 1
             booking.credit_refunded = True
         db.session.commit()
     except Exception:
