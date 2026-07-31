@@ -16,7 +16,7 @@
                         <div>
                             <small>
                                 {% if recommendation_executed %}
-                                    Workout Recommendation Agent · personalized profile + live SQLite schedule
+                                    Workout Recommendation Agent · personalized profile + live Supabase schedule
                                 {% elif skill_executed %}
                                     Skill executed: get_class_availability_skill
                                 {% else %}
@@ -50,7 +50,7 @@
                     <div class="col-lg-5">
                         <span class="eyebrow text-primary">EXPLICIT AI SKILL</span>
                         <h2 class="h5 mb-1">Check class availability</h2>
-                        <p class="text-secondary mb-0">Run the SQLite-backed <code>get_class_availability_skill</code> directly.</p>
+                        <p class="text-secondary mb-0">Run the Supabase-backed <code>get_class_availability_skill</code> directly.</p>
                     </div>
                     <div class="col-lg-7">
                         <form class="row g-2" method="post" action="{{ url_for('member.assistant_availability') }}">

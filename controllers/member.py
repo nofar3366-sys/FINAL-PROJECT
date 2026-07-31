@@ -12,7 +12,7 @@ from flask import (
 )
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from controllers.auth import clear_invalid_session, member_required, validate_csrf
 from controllers.safe_db import recover_from_db_error
@@ -305,35 +305,49 @@ def assistant():
 
     validate_csrf()
     question = request.form.get("question", "").strip()
-    sessions = db.session.scalars(
-        select(WorkoutSession)
-        .options(
-            joinedload(WorkoutSession.trainer),
-            joinedload(WorkoutSession.bookings),
-        )
-        .where(
-            WorkoutSession.starts_at > utc_now(),
-        )
-        .order_by(WorkoutSession.starts_at)
-        .limit(12)
-    ).all()
-    schedule_text = "\n".join(
-        f"{item.title} with {item.trainer.full_name} on "
-        f"{item.starts_at:%Y-%m-%d at %H:%M}; "
-        f"{item.remaining_capacity} places remaining."
-        for item in sessions
-    )
-    documents = (
-        KnowledgeDocument(
-            key="live-schedule",
-            title="Current training schedule",
-            content=schedule_text or "No upcoming sessions are scheduled.",
-        ),
-    )
     try:
+        if not question:
+            raise ValueError("Please enter a question.")
+        sessions = db.session.scalars(
+            select(WorkoutSession)
+            .options(
+                joinedload(WorkoutSession.trainer),
+                selectinload(WorkoutSession.bookings),
+            )
+            .where(
+                WorkoutSession.status == "scheduled",
+                WorkoutSession.starts_at > utc_now(),
+            )
+            .order_by(WorkoutSession.starts_at)
+            .limit(12)
+        ).all()
+        schedule_text = "\n".join(
+            f"{item.title} with {item.trainer.full_name} on "
+            f"{item.starts_at:%Y-%m-%d at %H:%M}; "
+            f"{item.remaining_capacity} places remaining."
+            for item in sessions
+        )
+        documents = (
+            KnowledgeDocument(
+                key="live-schedule",
+                title="Current training schedule",
+                content=schedule_text or "No upcoming sessions are scheduled.",
+            ),
+        )
         answer = current_app.extensions["ai_service"].ask(question, documents)
-    except (ValueError, AIServiceError) as exc:
-        answer = f"Demo assistant response: {exc}"
+        if not isinstance(answer, str) or not answer.strip():
+            raise AIServiceError("The AI service returned an empty response.")
+    except Exception as exc:
+        # Query construction, Groq timeouts, malformed responses, and optional
+        # service failures all degrade to HTTP 200 without touching auth state.
+        db.session.rollback()
+        current_app.logger.error(
+            "Member AI chat failed: %s", exc, exc_info=True
+        )
+        answer = (
+            "The studio assistant is temporarily unavailable. "
+            "Your session is still active; please try again shortly."
+        )
     return render_template(
         "ai_assistant.html",
         member=member,
@@ -364,8 +378,16 @@ def assistant_availability():
             answer = (
                 f"No {result['specialty']} classes are scheduled on {result['date']}."
             )
-    except ValueError as exc:
-        answer = str(exc)
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.error(
+            "Member availability assistant failed: %s", exc, exc_info=True
+        )
+        answer = (
+            str(exc)
+            if isinstance(exc, ValueError)
+            else "Availability is temporarily unavailable. Please try again."
+        )
     return render_template(
         "ai_assistant.html",
         member=member,
@@ -381,31 +403,43 @@ def assistant_recommendation():
     validate_csrf()
     member = g.user.member
     goal = request.form.get("goal", "").strip()
-    upcoming = db.session.scalars(
-        select(WorkoutSession)
-        .where(
-            WorkoutSession.status == "scheduled",
-            WorkoutSession.starts_at > utc_now(),
-        )
-        .order_by(WorkoutSession.starts_at)
-        .limit(20)
-    ).all()
-    available_classes = [
-        {
-            "title": item.title,
-            "specialty": item.trainer.specialty,
-            "starts_at": item.starts_at.strftime("%A, %d %B at %H:%M"),
-            "remaining_capacity": item.remaining_capacity,
-        }
-        for item in upcoming
-        if item.remaining_capacity > 0
-    ]
-    recent_workouts = [
-        booking.workout_session.title
-        for booking in sorted(member.bookings, key=lambda item: item.booked_at, reverse=True)
-        if booking.status == "booked"
-    ][:3]
     try:
+        upcoming = db.session.scalars(
+            select(WorkoutSession)
+            .options(
+                joinedload(WorkoutSession.trainer),
+                selectinload(WorkoutSession.bookings),
+            )
+            .where(
+                WorkoutSession.status == "scheduled",
+                WorkoutSession.starts_at > utc_now(),
+            )
+            .order_by(WorkoutSession.starts_at)
+            .limit(20)
+        ).all()
+        available_classes = [
+            {
+                "title": item.title,
+                "specialty": item.trainer.specialty,
+                "starts_at": item.starts_at.strftime("%A, %d %B at %H:%M"),
+                "remaining_capacity": item.remaining_capacity,
+            }
+            for item in upcoming
+            if item.remaining_capacity > 0
+        ]
+        recent_bookings = db.session.scalars(
+            select(Booking)
+            .options(joinedload(Booking.workout_session))
+            .where(
+                Booking.member_id == member.id,
+                Booking.status == "booked",
+            )
+            .order_by(Booking.booked_at.desc())
+            .limit(3)
+        ).all()
+        recent_workouts = [
+            booking.workout_session.title for booking in recent_bookings
+        ]
         answer = current_app.extensions["ai_service"].recommend_workout(
             goal,
             {
@@ -416,8 +450,15 @@ def assistant_recommendation():
             },
             available_classes,
         )
-    except (ValueError, AIServiceError) as exc:
-        answer = f"Recommendation unavailable: {exc}"
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.error(
+            "Member AI recommendation failed: %s", exc, exc_info=True
+        )
+        answer = (
+            "Workout recommendations are temporarily unavailable. "
+            "Your session is still active; please try again shortly."
+        )
     return render_template(
         "ai_assistant.html",
         member=member,

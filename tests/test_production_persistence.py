@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.exc import OperationalError
 
 from fitness_studio import create_app
 from fitness_studio.config import resolve_runtime_database_uri
@@ -75,6 +76,13 @@ def test_registration_survives_a_new_app_instance(tmp_path):
         assert user.member.first_name == "Persistent"
         assert user.member.last_name == "Member"
         assert user.member.membership_expires_on == date.today()
+        login = second_app.test_client().post(
+            "/auth/login",
+            data={"email": "persistent@example.com", "password": "secret7"},
+            follow_redirects=True,
+        )
+        assert login.status_code == 200
+        assert b"Welcome, Persistent Member" in login.data
 
 
 def test_manager_ai_failure_creates_fallback_without_logout(app, monkeypatch):
@@ -102,6 +110,61 @@ def test_manager_ai_failure_creates_fallback_without_logout(app, monkeypatch):
     dashboard = client.get("/manager/dashboard")
     assert dashboard.status_code == 200
     assert b"Manager dashboard" in dashboard.data
+
+
+def test_member_ai_failure_returns_fallback_without_logout(app, monkeypatch):
+    seed_demo_data()
+    client = app.test_client()
+    _login(client, "alice@fitness.local")
+    with client.session_transaction() as session:
+        original_user_id = session["user_id"]
+
+    def fail_ai(*_args, **_kwargs):
+        raise RuntimeError("unexpected provider response")
+
+    monkeypatch.setattr(app.extensions["ai_service"], "ask", fail_ai)
+    response = client.post(
+        "/member/assistant",
+        data={"question": "What classes can I take?"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b"temporarily unavailable" in response.data
+    assert b"Internal Server Error" not in response.data
+
+    with client.session_transaction() as session:
+        assert session["user_id"] == original_user_id
+    dashboard = client.get("/member/dashboard")
+    assert dashboard.status_code == 200
+    assert b"Welcome, Alice Active" in dashboard.data
+
+
+def test_registration_commit_failure_rolls_back_cleanly(app, monkeypatch):
+    client = app.test_client()
+
+    def fail_commit():
+        raise OperationalError("COMMIT", {}, RuntimeError("database unavailable"))
+
+    monkeypatch.setattr(db.session, "commit", fail_commit)
+    response = client.post(
+        "/auth/register",
+        data={
+            "first_name": "Failed",
+            "last_name": "Registration",
+            "email": "failed-registration@example.com",
+            "password": "secret7",
+            "confirm_password": "secret7",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert "ההרשמה לא נשמרה במסד הנתונים" in response.get_data(as_text=True)
+    assert (
+        db.session.scalar(
+            select(User.id).where(User.email == "failed-registration@example.com")
+        )
+        is None
+    )
 
 
 def test_role_routes_and_schedule_alias_do_not_500(app):

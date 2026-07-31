@@ -297,33 +297,56 @@ def register():
         if error:
             flash(error, "danger")
         else:
-            user = User(email=email, role="member", is_active=True)
-            user.set_password(password)
-            member = Member(
-                user=user,
-                first_name=first_name,
-                last_name=last_name,
-                phone=phone or None,
-                membership_expires_on=date.today(),
-                credit_balance=0,
-                status="active",
-            )
-            # Explicitly stage both 1NF records in the same transaction.
-            db.session.add_all([user, member])
             try:
+                user = User(email=email, role="member", is_active=True)
+                user.set_password(password)
+                member = Member(
+                    user=user,
+                    first_name=first_name,
+                    last_name=last_name,
+                    phone=phone or None,
+                    membership_expires_on=date.today(),
+                    credit_balance=0,
+                    status="active",
+                )
+                # One atomic unit: User + normalized Member profile.
+                db.session.add(user)
+                db.session.add(member)
                 db.session.flush()
                 db.session.commit()
-            except IntegrityError:
+            except IntegrityError as exc:
                 db.session.rollback()
-                flash("An account with this email already exists.", "danger")
-            except SQLAlchemyError:
-                db.session.rollback()
-                current_app.logger.exception("Registration insert failed")
-                recover_from_db_error(
-                    "Registration failed because the database needed repair. "
-                    "Please try again."
+                current_app.logger.error(
+                    "Registration integrity error for %s: %s",
+                    email,
+                    exc,
+                    exc_info=True,
                 )
-                return redirect(url_for("auth.register"))
+                flash("כתובת האימייל כבר קיימת במערכת.", "danger")
+            except SQLAlchemyError as exc:
+                db.session.rollback()
+                current_app.logger.error(
+                    "Supabase registration commit failed for %s: %s",
+                    email,
+                    exc,
+                    exc_info=True,
+                )
+                flash(
+                    "ההרשמה לא נשמרה במסד הנתונים. אנא נסו שוב בעוד רגע.",
+                    "danger",
+                )
+            except Exception as exc:
+                db.session.rollback()
+                current_app.logger.error(
+                    "Unexpected registration failure for %s: %s",
+                    email,
+                    exc,
+                    exc_info=True,
+                )
+                flash(
+                    "אירעה שגיאה במהלך ההרשמה. לא נשמרו נתונים חלקיים.",
+                    "danger",
+                )
             else:
                 flash(
                     "Registration complete. A manager can renew your membership.",
