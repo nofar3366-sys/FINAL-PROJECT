@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Trainer Dashboard | Fitness Studio{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div><span class="eyebrow text-primary">TRAINER PORTAL</span><h1 class="h2 mb-1">Welcome, {{ trainer.full_name }}</h1><p class="text-secondary mb-0">Manage your training slots and view registered participants.</p></div>
+    <a class="btn btn-primary" href="{{ url_for('trainer.new_session') }}">Add workout</a>
+</div>
+<div class="card content-card"><div class="card-body p-0"><div class="table-responsive"><table class="table align-middle mb-0">
+    <thead><tr><th>Workout</th><th>Date and time</th><th>Capacity</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>{% for workout in sessions %}<tr>
+        <td class="fw-semibold">{{ workout.title }}</td><td>{{ workout.starts_at.strftime('%a, %d %b %Y at %H:%M') }}</td>
+        <td>{{ workout.active_booking_count }} / {{ workout.max_capacity }}</td><td><span class="badge text-bg-{{ 'success' if workout.status == 'scheduled' else 'secondary' }}">{{ workout.status|title }}</span></td>
+        <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('trainer.participants', session_id=workout.id) }}">Participants</a>{% if workout.status == 'scheduled' and workout.is_upcoming %}<form class="d-inline" method="post" action="{{ url_for('trainer.cancel_workout_session', session_id=workout.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-danger" type="submit">Cancel slot</button></form>{% endif %}</td>
+    </tr>{% else %}<tr><td class="text-center text-secondary py-5" colspan="5">No training slots yet.</td></tr>{% endfor %}</tbody>
+</table></div></div></div>
+{% endblock %}

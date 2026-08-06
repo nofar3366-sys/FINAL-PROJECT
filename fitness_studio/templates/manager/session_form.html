@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Create Session | Fitness Studio{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-lg-7"><div class="card border-0 shadow-sm"><div class="card-body p-4">
+    <h1 class="h3 mb-4">Create workout session</h1>
+    <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="mb-3"><label class="form-label" for="title">Class title</label><input class="form-control" id="title" name="title" value="{{ request.form.get('title', '') }}" placeholder="Pilates" required></div>
+        <div class="mb-3"><label class="form-label" for="trainer_id">Trainer and specialty</label><select class="form-select" id="trainer_id" name="trainer_id" required><option value="">Choose trainer</option>{% for trainer in trainers %}<option value="{{ trainer.id }}" {% if request.form.get('trainer_id') == trainer.id|string %}selected{% endif %}>{{ trainer.full_name }} — {{ trainer.specialty }}</option>{% endfor %}</select></div>
+        <div class="row">
+            <div class="col-md-6 mb-3"><label class="form-label" for="starts_at">Date and time</label><input class="form-control" id="starts_at" name="starts_at" type="datetime-local" value="{{ request.form.get('starts_at', '') }}" required></div>
+            <div class="col-md-3 mb-3"><label class="form-label" for="duration_minutes">Minutes</label><input class="form-control" id="duration_minutes" name="duration_minutes" type="number" min="1" value="{{ request.form.get('duration_minutes', 60) }}" required></div>
+            <div class="col-md-3 mb-3"><label class="form-label" for="max_capacity">Capacity</label><input class="form-control" id="max_capacity" name="max_capacity" type="number" min="1" value="{{ request.form.get('max_capacity', 15) }}" required></div>
+        </div>
+        <button class="btn btn-primary" type="submit">Create session</button><a class="btn btn-link" href="{{ url_for('manager.sessions') }}">Cancel</a>
+    </form>
+</div></div></div></div>
+{% endblock %}

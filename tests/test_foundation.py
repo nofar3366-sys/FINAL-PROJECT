@@ -41,9 +41,15 @@ def test_schema_and_health_endpoint(app):
 def test_all_page_templates_extend_base(app):
     template_directory = Path(app.root_path) / "templates"
     child_templates = [
-        path for path in template_directory.glob("*.html") if path.name != "base.html"
+        path for path in template_directory.rglob("*.html") if path.name != "base.html"
     ]
     assert child_templates
+    assert {path.parent.name for path in child_templates} == {
+        "auth",
+        "manager",
+        "member",
+        "trainer",
+    }
     for template in child_templates:
         source = template.read_text(encoding="utf-8")
         assert source.lstrip().startswith('{% extends "base.html" %}')

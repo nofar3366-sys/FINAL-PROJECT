@@ -39,7 +39,7 @@ def dashboard():
         recover_from_db_error()
         return redirect(url_for("auth.login"))
     return render_template(
-        "trainer_dashboard.html",
+        "trainer/dashboard.html",
         trainer=g.user.trainer,
         sessions=sessions,
     )
@@ -68,7 +68,7 @@ def new_session():
             return redirect(url_for("trainer.dashboard"))
 
     return render_template(
-        "trainer_session_form.html",
+        "trainer/session_form.html",
         trainer=g.user.trainer,
         suggested_start=(utc_now() + timedelta(days=1))
         .replace(minute=0, second=0, microsecond=0)
@@ -108,7 +108,7 @@ def participants(session_id: int):
         .order_by(Booking.booked_at)
     ).all()
     return render_template(
-        "trainer_participants.html",
+        "trainer/participants.html",
         trainer=g.user.trainer,
         workout_session=workout_session,
         bookings=bookings,

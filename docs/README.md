@@ -1,11 +1,13 @@
 # Fitness Studio Documentation
 
-These documents translate the course brief into an implementation-ready design for a Flask, Jinja, Bootstrap 5, and SQLite fitness-studio application.
+These documents connect the course brief in [`final2026.pdf`](../final2026.pdf)
+to the implemented Flask, Jinja, Bootstrap 5, and Flask-SQLAlchemy fitness-studio
+system.
 
 ## Core documents
 - [Agent guide](agent.md): implementation rules and definition of done
 - [Implementation plan](plan.md): scope, phases, and delivery order
-- [Architecture](architecture.md): MVC boundaries, Flask structure, SQLite transactions, and security
+- [Architecture](architecture.md): MVC boundaries, Flask structure, database modes, deployment, and security
 - [Requirements](requirements.md): actors, functional requirements, rules, and quality attributes
 - [Data model](data_model.md): 3NF entities, relationships, constraints, and transaction boundaries
 - [UI/UX](ui_ux.md): Bootstrap layouts, navigation, states, and accessibility
@@ -19,14 +21,23 @@ These documents translate the course brief into an implementation-ready design f
 - [Session booking](features/session_booking.md)
 - [Database initialization and demo seed](features/demo_seed.md)
 
-## Scope decision
-The system uses three authenticated roles: Manager, Member (trainee), and Trainer (coach). Trainers manage only their own workout slots and participant lists. Approved bonus integrations include Groq RAG/AI scheduling and Resend receipts, both with demo-safe fallbacks. Local SQLite remains the authoritative database.
+## Implemented scope
+The system uses three authenticated roles: Manager, Member (trainee), and
+Trainer (coach). Trainers manage only their own workout slots and participant
+lists. Flask-SQLAlchemy supports SQLite for local development and isolated tests,
+and Supabase PostgreSQL for production on Vercel. Bonus work includes Groq
+RAG/AI scheduling and allow-listed runtime Python Skills; Resend provides receipt
+delivery. External AI and email integrations have demo-safe fallbacks.
+
+The runtime Python tools in [`skills/`](../skills/) are application capabilities.
+Project-scoped Cursor workflow skills live separately in
+[`../.cursor/skills/`](../.cursor/skills/).
 
 ## Document precedence
 If documents conflict:
-1. Explicit user decisions and `requirements.md`
-2. Feature acceptance criteria
-3. `architecture.md` and `data_model.md`
-4. Implementation details in `plan.md`
+1. The course brief in `final2026.pdf` for assessment requirements
+2. The current code for implemented behavior
+3. `requirements.md` and feature acceptance criteria for documented intent
+4. `architecture.md`, `data_model.md`, and `plan.md` for design context
 
 Update the affected design document whenever a business rule changes so the documentation and implementation remain aligned.

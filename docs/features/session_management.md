@@ -32,7 +32,7 @@ Allow the manager to build and maintain a safe studio schedule with trainer assi
 - Cancellation behavior must be explicit: cancel active bookings and restore each consumed credit once in the same transaction.
 
 ## Session cancellation transaction
-1. Acquire SQLite write transaction.
+1. Begin a database transaction and acquire dialect-appropriate locks.
 2. Re-read scheduled session and active bookings.
 3. Mark session cancelled.
 4. Mark each active booking cancelled with timestamp.

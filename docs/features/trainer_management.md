@@ -8,11 +8,15 @@ Let the manager maintain trainer profiles and login accounts. Authenticated trai
 - As a manager, I can search trainers by name or specialty.
 - As a manager, I can see a trainer's upcoming sessions.
 - As a manager, I can assign only an active trainer to a new session.
+- As a trainer, I can authenticate, manage my own workout slots, and view
+  participants registered for my sessions.
 
 ## MVC design
 - **Model:** trainer CRUD, active filter, search, session relationship queries.
 - **Controller:** manager-only list, create, detail, edit, and deactivate actions.
 - **View:** responsive trainer list, form, detail, status badge, upcoming schedule.
+- **Trainer portal:** trainer-authorized dashboard, own-slot creation/cancellation,
+  and participant views scoped through the linked trainer profile.
 
 ## Suggested routes
 - `GET /manager/trainers`
@@ -28,6 +32,9 @@ Let the manager maintain trainer profiles and login accounts. Authenticated trai
 - Referenced trainers are deactivated, not hard-deleted.
 - Existing sessions retain their trainer relationship after deactivation.
 - Deactivated trainers cannot be selected for newly created sessions.
+- Each trainer login is linked to at most one trainer profile.
+- Trainer controllers derive trainer identity from the authenticated user rather
+  than trusting a posted trainer ID.
 - Changing a future session to another trainer is handled by session management and must check conflicts.
 
 ## Acceptance criteria
@@ -36,3 +43,4 @@ Let the manager maintain trainer profiles and login accounts. Authenticated trai
 - Invalid data is rejected with field-level feedback.
 - Deactivation preserves historical and upcoming session records.
 - Trainer detail shows an accurate upcoming schedule.
+- Trainer accounts cannot manage or inspect another trainer's portal data.

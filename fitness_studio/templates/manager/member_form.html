@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if member else 'Add' }} Member | Fitness Studio{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-lg-7"><div class="card border-0 shadow-sm"><div class="card-body p-4">
+    <h1 class="h3 mb-4">{{ 'Edit member' if member else 'Add member' }}</h1>
+    <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="row">
+            <div class="col-md-4 mb-3"><label class="form-label" for="first_name">First name</label><input class="form-control" id="first_name" name="first_name" value="{{ request.form.get('first_name', member.first_name if member else '') }}" required></div>
+            <div class="col-md-4 mb-3"><label class="form-label" for="last_name">Last name</label><input class="form-control" id="last_name" name="last_name" value="{{ request.form.get('last_name', member.last_name if member else '') }}" required></div>
+            <div class="col-md-4 mb-3"><label class="form-label" for="email">Email</label><input class="form-control" id="email" name="email" type="email" value="{{ request.form.get('email', member.user.email if member else '') }}" required></div>
+        </div>
+        <div class="mb-3"><label class="form-label" for="phone">Phone</label><input class="form-control" id="phone" name="phone" value="{{ request.form.get('phone', member.phone if member and member.phone else '') }}"></div>
+        {% if not member %}<div class="mb-3"><label class="form-label" for="password">Temporary password</label><input class="form-control" id="password" name="password" type="password" minlength="6" required></div>{% endif %}
+        <div class="row">
+            <div class="col-md-4 mb-3"><label class="form-label" for="membership_expires_on">Membership expiry</label><input class="form-control" id="membership_expires_on" name="membership_expires_on" type="date" value="{{ request.form.get('membership_expires_on', member.membership_expires_on if member else '') }}" required></div>
+            <div class="col-md-4 mb-3"><label class="form-label" for="credit_balance">Credit balance</label><input class="form-control" id="credit_balance" name="credit_balance" type="number" min="0" value="{{ request.form.get('credit_balance', member.credit_balance if member else 0) }}" required></div>
+            <div class="col-md-4 mb-3"><label class="form-label" for="status">Status</label>{% set selected_status = request.form.get('status', member.status if member else 'active') %}<select class="form-select" id="status" name="status"><option value="active" {% if selected_status == 'active' %}selected{% endif %}>Active</option><option value="inactive" {% if selected_status == 'inactive' %}selected{% endif %}>Inactive</option></select></div>
+        </div>
+        <button class="btn btn-primary" type="submit">Save member</button><a class="btn btn-link" href="{{ url_for('manager.members') }}">Cancel</a>
+    </form>
+</div></div></div></div>
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Dashboard | Fitness Studio{% endblock %}
+{% block content %}
+<div class="dashboard-hero mb-4">
+    <div>
+        <span class="eyebrow">MEMBER OVERVIEW</span>
+        <h1 class="display-6 fw-bold mb-2">Welcome, {{ member_name }}</h1>
+        <p class="mb-0 opacity-75">Stay consistent. Your next great workout starts here.</p>
+    </div>
+    <span class="status-pill {{ 'status-available' if membership_active else 'status-full' }}">{{ 'Membership active' if membership_active else 'Action required' }}</span>
+</div>
+<div class="row g-3 mb-4">
+    <div class="col-sm-6 col-xl-3"><div class="card stat-card stat-accent"><div class="card-body"><span class="stat-label">Active credits</span><div class="stat-value">{{ credit_balance }}</div><small>Available to book</small></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card stat-card"><div class="card-body"><span class="stat-label">Used credits</span><div class="stat-value">{{ used_credits }}</div><small>Current bookings</small></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card stat-card"><div class="card-body"><span class="stat-label">Membership expires</span><div class="h4 mt-3 mb-2">{{ membership_expires_on }}</div><small>Renew anytime</small></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card stat-card"><div class="card-body"><span class="stat-label">Upcoming workouts</span><div class="stat-value">{{ upcoming_bookings|length }}</div><small>Personally booked</small></div></div></div>
+</div>
+<div class="card content-card"><div class="card-body p-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div><span class="eyebrow text-primary">YOUR TRAINING</span><h2 class="h4 mb-0">Upcoming workouts</h2></div>
+        <a class="btn btn-primary" href="{{ url_for('member.schedule') }}">Browse classes</a>
+    </div>
+    <div class="row g-3">
+        {% for item in upcoming_bookings %}
+            <div class="col-md-6 col-xl-4"><div class="workout-item">
+                <div class="workout-date"><strong>{{ item.day }}</strong><span>{{ item.month }}</span></div>
+                <div><h3 class="h6 mb-1">{{ item.title }}</h3><small class="text-secondary">{{ item.when }} · {{ item.trainer }}</small></div>
+            </div></div>
+        {% else %}
+            <div class="col-12"><div class="empty-state">No upcoming workouts yet. Explore the schedule and reserve your spot.</div></div>
+        {% endfor %}
+    </div>
+</div></div>
+{% endblock %}

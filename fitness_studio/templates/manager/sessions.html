@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Sessions | Fitness Studio{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4"><div><h1 class="h2 mb-1">Workout sessions</h1><p class="text-secondary mb-0">Manual and AI-assisted scheduling.</p></div><a class="btn btn-primary" href="{{ url_for('manager.new_session') }}">Create session</a></div>
+<div class="card border-0 shadow-sm mb-4"><div class="card-body">
+    <h2 class="h4">AI scheduling assistant</h2>
+    <p class="text-secondary">Groq extracts the schedule, then the approved skill creates the next four weekly sessions. A local parser takes over automatically if the API is unavailable.</p>
+    <div class="d-flex flex-wrap gap-2 mb-3"><span class="status-pill status-available">Skill: schedule_class_skill</span><span class="status-pill status-available">Skill: schedule_recurring_sessions_skill</span></div>
+    <form method="post" action="{{ url_for('manager.ai_schedule') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="input-group"><input class="form-control" name="prompt" placeholder="Schedule Pilates with Maya every Tuesday at 18:00 with capacity 15" required><button class="btn btn-dark" type="submit">Schedule with AI</button></div></form>
+    <small class="text-secondary">Active trainers: {{ trainers|map(attribute='full_name')|join(', ') }}</small>
+</div></div>
+<div class="card border-0 shadow-sm"><div class="table-responsive"><table class="table table-hover align-middle mb-0">
+    <thead><tr><th>Session</th><th>Trainer</th><th>Starts</th><th>Status</th><th>Occupancy</th><th></th></tr></thead>
+    <tbody>{% for item in sessions %}<tr>
+        <td>{{ item.title }}<br><small class="text-secondary">{{ item.duration_minutes }} minutes</small></td>
+        <td>{{ item.trainer.full_name }}<br><small class="text-secondary">{{ item.trainer.specialty }}</small></td>
+        <td>{{ item.starts_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td><span class="badge text-bg-{{ 'secondary' if item.status == 'cancelled' else ('danger' if item.remaining_capacity == 0 else 'success') }}">{{ 'Full' if item.status == 'scheduled' and item.remaining_capacity == 0 else item.status|title }}</span></td>
+        <td>{{ item.active_booking_count }} / {{ item.max_capacity }}</td>
+        <td>{% if item.status == 'scheduled' %}<form method="post" action="{{ url_for('manager.cancel_workout_session', session_id=item.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-danger" type="submit">Cancel</button></form>{% endif %}</td>
+    </tr>{% else %}<tr><td colspan="6" class="text-center text-secondary py-4">No sessions.</td></tr>{% endfor %}</tbody>
+</table></div></div>
+{% endblock %}

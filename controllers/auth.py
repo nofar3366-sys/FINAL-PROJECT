@@ -208,7 +208,7 @@ def login():
                 "If this persists, the configured DATABASE_URL may be invalid.",
                 "danger",
             )
-            return render_template("login.html")
+            return render_template("auth/login.html")
 
         active = user is not None and user.is_active is not False
         if user is None or not active or not user.check_password(password):
@@ -250,7 +250,7 @@ def login():
                 flash("Welcome back.", "success")
                 return _dashboard_redirect(user)
 
-    return render_template("login.html")
+    return render_template("auth/login.html")
 
 
 @auth_bp.route("/register", methods=("GET", "POST"))
@@ -290,7 +290,7 @@ def register():
                     "Unable to reach the database. Please try again in a moment.",
                     "danger",
                 )
-                return render_template("register.html")
+                return render_template("auth/register.html")
             if exists:
                 error = "An account with this email already exists."
 
@@ -354,7 +354,7 @@ def register():
                 )
                 return redirect(url_for("auth.login"))
 
-    return render_template("register.html")
+    return render_template("auth/register.html")
 
 
 @auth_bp.post("/logout")

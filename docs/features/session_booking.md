@@ -20,7 +20,8 @@ At transaction time all conditions must be true:
 
 ## Atomic booking algorithm
 ```text
-BEGIN IMMEDIATE
+BEGIN TRANSACTION
+  acquire dialect-appropriate write/row lock
   re-read member and session
   count active bookings
   validate every eligibility rule
@@ -34,7 +35,10 @@ COMMIT
 On any validation, constraint, or update failure, roll back. The controller displays a specific safe message and must not retry a non-idempotent operation blindly.
 
 ## Cancellation policy
-Default first-release policy: a member may cancel a booked session only before it starts. Cancellation and one-credit restoration occur in one immediate transaction. The refund update is conditional on `credit_consumed = 1 AND credit_refunded = 0` and sets `credit_refunded = 1`, so repeating the request cannot restore another credit.
+Current policy: a member may cancel a booked session only before it starts.
+Cancellation and one-credit restoration occur in one transaction. The refund
+update is conditional on `credit_consumed = 1 AND credit_refunded = 0` and sets
+`credit_refunded = 1`, so repeating the request cannot restore another credit.
 
 ## MVC design
 - **Model:** session availability queries, booking/history queries, constrained updates.
@@ -51,7 +55,10 @@ Default first-release policy: a member may cancel a booked session only before i
 The member identity always comes from the authenticated session, never from a posted member ID.
 
 ## Capacity enforcement
-The displayed remaining count is informational and may become stale. The authoritative check occurs after acquiring SQLite write access. A unique booking constraint and non-negative credit check provide final database safeguards.
+The displayed remaining count is informational and may become stale. The
+authoritative check occurs inside the database transaction after acquiring the
+available dialect-specific lock. A unique booking constraint and non-negative
+credit check provide final database safeguards.
 
 ## Acceptance criteria
 - Eligible booking creates one booking and consumes one credit.

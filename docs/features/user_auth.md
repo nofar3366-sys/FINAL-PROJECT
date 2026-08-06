@@ -1,11 +1,14 @@
 # Feature: User Authentication and Authorization
 
 ## Purpose
-Authenticate manager and member users and enforce role-based access at every protected controller.
+Authenticate manager, member, and trainer users and enforce role-based access
+at every protected controller.
 
 ## User stories
 - As a manager, I can log in and access management functions.
 - As a member, I can log in and access only my own dashboard, sessions, and bookings.
+- As a trainer, I can log in and access only my linked trainer portal, sessions,
+  and participant lists.
 - As any user, I can log out and invalidate my session.
 - As an inactive user, I cannot authenticate.
 
@@ -26,7 +29,8 @@ Authenticate manager and member users and enforce role-based access at every pro
 - `GET, POST /auth/login`
 - `POST /auth/logout`
 
-After login, accept only validated local redirect targets; otherwise route managers to the manager dashboard and members to their own dashboard.
+After login, accept only validated local redirect targets; otherwise route each
+of the three roles to its own dashboard.
 
 ## Validation and security
 - Email is required, trimmed, and normalized.
@@ -41,6 +45,7 @@ After login, accept only validated local redirect targets; otherwise route manag
 - Correct active credentials establish the expected role session.
 - Invalid or inactive credentials do not authenticate.
 - Anonymous access to protected routes redirects to login.
-- Authenticated wrong-role access returns 403.
+- Authenticated wrong-role access returns 403 or an equivalent safe denial.
 - A member cannot substitute an ID to access another member.
+- A trainer cannot substitute an ID to access another trainer's data.
 - Logout removes access to protected pages.

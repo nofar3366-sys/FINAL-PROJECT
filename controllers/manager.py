@@ -1,6 +1,4 @@
-import csv
 from datetime import date, datetime
-from io import StringIO
 
 from flask import (
     Blueprint,
@@ -13,22 +11,27 @@ from flask import (
     url_for,
 )
 from sqlalchemy import func, or_, select
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.exc import SQLAlchemyError
 
 from controllers.auth import manager_required, validate_csrf
 from controllers.safe_db import recover_from_db_error
-from models import (
-    Booking,
-    Member,
-    MembershipPurchase,
-    MembershipSubscription,
-    Trainer,
-    User,
-    WorkoutSession,
-    db,
-)
+from models import Member, Trainer, User, db
 from models.time_utils import ensure_utc
+from services.manager_service import (
+    ManagerServiceError,
+    create_member,
+    create_trainer,
+    generate_ai_schedule,
+    generate_operational_report,
+    get_active_trainers,
+    get_dashboard_context,
+    get_sessions_context,
+    get_subscription_members,
+    set_member_active,
+    set_trainer_active,
+    update_member,
+    update_trainer,
+)
 from services.membership_service import (
     MembershipPurchaseError,
     set_subscription_status,
@@ -36,11 +39,8 @@ from services.membership_service import (
 from services.scheduling_service import (
     SchedulingError,
     cancel_session,
-    create_fallback_workout_sessions,
     create_session,
-    validate_schedule_payload,
 )
-from skills.scheduling import schedule_recurring_sessions_skill
 
 
 manager_bp = Blueprint("manager", __name__, url_prefix="/manager")
@@ -50,35 +50,12 @@ manager_bp = Blueprint("manager", __name__, url_prefix="/manager")
 @manager_required
 def dashboard():
     try:
-        counts = {
-            "members": db.session.scalar(select(func.count(Member.id))),
-            "trainers": db.session.scalar(select(func.count(Trainer.id))),
-            "sessions": db.session.scalar(select(func.count(WorkoutSession.id))),
-            "bookings": db.session.scalar(
-                select(func.count(Booking.id)).where(Booking.status == "booked")
-            ),
-            "revenue_cents": db.session.scalar(
-                select(
-                    func.coalesce(func.sum(MembershipPurchase.amount_paid_cents), 0)
-                )
-            ),
-        }
-        members = db.session.scalars(
-            select(Member).order_by(Member.created_at.desc()).limit(5)
-        ).all()
-        trainers = db.session.scalars(
-            select(Trainer).order_by(Trainer.created_at.desc()).limit(5)
-        ).all()
+        context = get_dashboard_context()
     except SQLAlchemyError:
         current_app.logger.exception("Manager dashboard query failed")
         recover_from_db_error()
         return redirect(url_for("auth.login"))
-    return render_template(
-        "dashboard.html",
-        counts=counts,
-        members=members,
-        trainers=trainers,
-    )
+    return render_template("manager/dashboard.html", **context)
 
 
 @manager_bp.get("/members")
@@ -99,7 +76,9 @@ def members():
             )
         )
     return render_template(
-        "members.html", members=db.session.scalars(query).all(), search=search
+        "manager/members.html",
+        members=db.session.scalars(query).all(),
+        search=search,
     )
 
 
@@ -111,42 +90,23 @@ def new_member():
         values, error = _member_form_values(require_password=True)
         if error:
             flash(error, "danger")
-        elif db.session.scalar(
-            select(User.id).where(func.lower(User.email) == values["email"])
-        ):
-            flash("An account with this email already exists.", "danger")
         else:
-            user = User(
-                email=values["email"], role="member", is_active=values["is_active"]
-            )
-            user.set_password(values["password"])
-            member = Member(
-                user=user,
-                first_name=values["first_name"],
-                last_name=values["last_name"],
-                phone=values["phone"],
-                membership_expires_on=values["expiry"],
-                credit_balance=values["credits"],
-                status=values["status"],
-            )
-            db.session.add(member)
             try:
-                db.session.commit()
-            except IntegrityError:
-                db.session.rollback()
-                flash("The member could not be created.", "danger")
+                member = create_member(values)
+            except ManagerServiceError as exc:
+                flash(str(exc), "danger")
             else:
                 flash("Member created.", "success")
                 return redirect(url_for("manager.member_detail", member_id=member.id))
 
-    return render_template("member_form.html", member=None)
+    return render_template("manager/member_form.html", member=None)
 
 
 @manager_bp.get("/members/<int:member_id>")
 @manager_required
 def member_detail(member_id: int):
     member = db.get_or_404(Member, member_id)
-    return render_template("member_detail.html", member=member)
+    return render_template("manager/member_detail.html", member=member)
 
 
 @manager_bp.route("/members/<int:member_id>/edit", methods=("GET", "POST"))
@@ -156,34 +116,20 @@ def edit_member(member_id: int):
     if request.method == "POST":
         validate_csrf()
         values, error = _member_form_values(require_password=False)
-        duplicate = (
-            db.session.scalar(
-                select(User.id).where(
-                    func.lower(User.email) == values["email"],
-                    User.id != member.user_id,
-                )
-            )
-            if not error
-            else None
-        )
         if error:
             flash(error, "danger")
-        elif duplicate:
-            flash("An account with this email already exists.", "danger")
         else:
-            member.user.email = values["email"]
-            member.user.is_active = values["is_active"]
-            member.first_name = values["first_name"]
-            member.last_name = values["last_name"]
-            member.phone = values["phone"]
-            member.membership_expires_on = values["expiry"]
-            member.credit_balance = values["credits"]
-            member.status = values["status"]
-            db.session.commit()
-            flash("Member updated.", "success")
-            return redirect(url_for("manager.member_detail", member_id=member.id))
+            try:
+                update_member(member, values)
+            except ManagerServiceError as exc:
+                flash(str(exc), "danger")
+            else:
+                flash("Member updated.", "success")
+                return redirect(
+                    url_for("manager.member_detail", member_id=member.id)
+                )
 
-    return render_template("member_form.html", member=member)
+    return render_template("manager/member_form.html", member=member)
 
 
 @manager_bp.post("/members/<int:member_id>/deactivate")
@@ -191,9 +137,7 @@ def edit_member(member_id: int):
 def deactivate_member(member_id: int):
     validate_csrf()
     member = db.get_or_404(Member, member_id)
-    member.status = "inactive"
-    member.user.is_active = False
-    db.session.commit()
+    set_member_active(member, False)
     flash("Member deactivated.", "success")
     return redirect(url_for("manager.member_detail", member_id=member.id))
 
@@ -203,9 +147,7 @@ def deactivate_member(member_id: int):
 def activate_member(member_id: int):
     validate_csrf()
     member = db.get_or_404(Member, member_id)
-    member.status = "active"
-    member.user.is_active = True
-    db.session.commit()
+    set_member_active(member, True)
     flash("Member activated.", "success")
     return redirect(url_for("manager.member_detail", member_id=member.id))
 
@@ -226,7 +168,9 @@ def trainers():
             )
         )
     return render_template(
-        "trainers.html", trainers=db.session.scalars(query).all(), search=search
+        "manager/trainers.html",
+        trainers=db.session.scalars(query).all(),
+        search=search,
     )
 
 
@@ -238,34 +182,25 @@ def new_trainer():
         values, password, error = _trainer_form_values(require_password=True)
         if error:
             flash(error, "danger")
-        elif db.session.scalar(
-            select(User.id).where(func.lower(User.email) == values["email"])
-        ):
-            flash("A trainer with this email already exists.", "danger")
         else:
-            user = User(email=values["email"], role="trainer", is_active=values["is_active"])
-            user.set_password(password)
-            trainer = Trainer(user=user, **values)
-            db.session.add(trainer)
             try:
-                db.session.commit()
-            except IntegrityError:
-                db.session.rollback()
-                flash("A trainer with this email already exists.", "danger")
+                trainer = create_trainer(values, password)
+            except ManagerServiceError as exc:
+                flash(str(exc), "danger")
             else:
                 flash("Trainer created.", "success")
                 return redirect(
                     url_for("manager.trainer_detail", trainer_id=trainer.id)
                 )
 
-    return render_template("trainer_form.html", trainer=None)
+    return render_template("manager/trainer_form.html", trainer=None)
 
 
 @manager_bp.get("/trainers/<int:trainer_id>")
 @manager_required
 def trainer_detail(trainer_id: int):
     trainer = db.get_or_404(Trainer, trainer_id)
-    return render_template("trainer_detail.html", trainer=trainer)
+    return render_template("manager/trainer_detail.html", trainer=trainer)
 
 
 @manager_bp.route("/trainers/<int:trainer_id>/edit", methods=("GET", "POST"))
@@ -277,47 +212,20 @@ def edit_trainer(trainer_id: int):
         values, password, error = _trainer_form_values(
             require_password=trainer.user is None
         )
-        duplicate = (
-            db.session.scalar(
-                select(User.id).where(
-                    func.lower(User.email) == values["email"],
-                    User.id != (trainer.user_id or 0),
-                )
-            )
-            if not error
-            else None
-        )
         if error:
             flash(error, "danger")
-        elif duplicate:
-            flash("A trainer with this email already exists.", "danger")
         else:
-            for field, value in values.items():
-                setattr(trainer, field, value)
-            if trainer.user is None:
-                trainer.user = User(
-                    email=values["email"],
-                    role="trainer",
-                    is_active=values["is_active"],
-                )
-                trainer.user.set_password(password)
-            else:
-                trainer.user.email = values["email"]
-                trainer.user.is_active = values["is_active"]
-                if password:
-                    trainer.user.set_password(password)
             try:
-                db.session.commit()
-            except IntegrityError:
-                db.session.rollback()
-                flash("A trainer with this email already exists.", "danger")
+                update_trainer(trainer, values, password)
+            except ManagerServiceError as exc:
+                flash(str(exc), "danger")
             else:
                 flash("Trainer updated.", "success")
                 return redirect(
                     url_for("manager.trainer_detail", trainer_id=trainer.id)
                 )
 
-    return render_template("trainer_form.html", trainer=trainer)
+    return render_template("manager/trainer_form.html", trainer=trainer)
 
 
 @manager_bp.post("/trainers/<int:trainer_id>/deactivate")
@@ -325,10 +233,7 @@ def edit_trainer(trainer_id: int):
 def deactivate_trainer(trainer_id: int):
     validate_csrf()
     trainer = db.get_or_404(Trainer, trainer_id)
-    trainer.is_active = False
-    if trainer.user:
-        trainer.user.is_active = False
-    db.session.commit()
+    set_trainer_active(trainer, False)
     flash("Trainer deactivated.", "success")
     return redirect(url_for("manager.trainer_detail", trainer_id=trainer.id))
 
@@ -338,43 +243,21 @@ def deactivate_trainer(trainer_id: int):
 def activate_trainer(trainer_id: int):
     validate_csrf()
     trainer = db.get_or_404(Trainer, trainer_id)
-    trainer.is_active = True
-    if trainer.user:
-        trainer.user.is_active = True
-    db.session.commit()
+    set_trainer_active(trainer, True)
     flash("Trainer activated.", "success")
     return redirect(url_for("manager.trainer_detail", trainer_id=trainer.id))
-
-
-def _active_trainers():
-    return db.session.scalars(
-        select(Trainer)
-        .where(Trainer.is_active.is_(True))
-        .order_by(Trainer.first_name, Trainer.last_name)
-    ).all()
 
 
 @manager_bp.get("/sessions")
 @manager_required
 def sessions():
-    workout_sessions = db.session.scalars(
-        select(WorkoutSession)
-        .options(
-            joinedload(WorkoutSession.trainer),
-            selectinload(WorkoutSession.bookings),
-        )
-        .order_by(WorkoutSession.starts_at)
-    ).all()
-    trainers = _active_trainers()
-    return render_template(
-        "sessions.html", sessions=workout_sessions, trainers=trainers
-    )
+    return render_template("manager/sessions.html", **get_sessions_context())
 
 
 @manager_bp.route("/sessions/new", methods=("GET", "POST"))
 @manager_required
 def new_session():
-    trainers = _active_trainers()
+    trainers = get_active_trainers()
     if request.method == "POST":
         validate_csrf()
         try:
@@ -399,7 +282,7 @@ def new_session():
         else:
             flash("Workout session created.", "success")
             return redirect(url_for("manager.sessions"))
-    return render_template("session_form.html", trainers=trainers)
+    return render_template("manager/session_form.html", trainers=trainers)
 
 
 @manager_bp.post("/sessions/<int:session_id>/cancel")
@@ -420,68 +303,24 @@ def cancel_workout_session(session_id: int):
 def ai_schedule():
     validate_csrf()
     prompt = request.form.get("prompt", "").strip()
-    trainers = _active_trainers()
-    if not trainers:
-        flash("AI scheduling requires at least one active trainer.", "danger")
-        return redirect(url_for("manager.sessions"))
-
-    trainer_names = [trainer.full_name for trainer in trainers]
     try:
-        parsed = current_app.extensions["ai_service"].parse_schedule_command(
-            prompt, trainer_names
+        category, message = generate_ai_schedule(
+            prompt, current_app.extensions["ai_service"]
         )
-        schedule = validate_schedule_payload(parsed, trainers)
-        result = schedule_recurring_sessions_skill(
-            trainer_name=str(schedule["trainer_name"]),
-            title=str(schedule["title"]),
-            weekday=str(schedule["weekday"]),
-            start_time=str(schedule["start_time"]),
-            max_capacity=int(schedule["max_capacity"]),
-            occurrences=int(schedule["occurrences"]),
-            duration_minutes=int(schedule["duration_minutes"]),
-        )
-    except Exception as exc:  # LLM/network/JSON/conflict/DB are all contained.
-        db.session.rollback()
-        current_app.logger.exception(
-            "AI schedule generation failed; attempting deterministic fallback"
-        )
-        try:
-            session_ids = create_fallback_workout_sessions(trainers[0].id)
-        except Exception as fallback_exc:
-            db.session.rollback()
-            current_app.logger.exception("Fallback workout generation failed")
-            flash(
-                f"Could not generate workouts: {fallback_exc}",
-                "danger",
-            )
-        else:
-            flash(
-                "The AI service was unavailable, so "
-                f"{len(session_ids)} realistic demo workouts were created instead.",
-                "warning",
-            )
+    except ManagerServiceError as exc:
+        current_app.logger.exception("Fallback workout generation failed")
+        flash(str(exc), "danger")
     else:
-        flash(
-            f"AI scheduling created {result['created_count']} weekly sessions.",
-            "success",
-        )
+        flash(message, category)
     return redirect(url_for("manager.sessions"))
 
 
 @manager_bp.get("/subscriptions")
 @manager_required
 def subscriptions():
-    members = db.session.scalars(
-        select(Member)
-        .options(
-            joinedload(Member.user),
-            joinedload(Member.subscription).joinedload(
-                MembershipSubscription.plan
-            ),
-        )
-        .order_by(Member.first_name, Member.last_name)
-    ).all()
-    return render_template("subscriptions.html", members=members)
+    return render_template(
+        "manager/subscriptions.html", members=get_subscription_members()
+    )
 
 
 @manager_bp.post("/subscriptions/<int:member_id>/<status>")
@@ -500,60 +339,8 @@ def update_subscription(member_id: int, status: str):
 @manager_bp.get("/reports.csv")
 @manager_required
 def reports_csv():
-    output = StringIO()
-    writer = csv.writer(output)
-    purchases = db.session.scalars(
-        select(MembershipPurchase)
-        .options(
-            joinedload(MembershipPurchase.member),
-            joinedload(MembershipPurchase.plan),
-        )
-        .order_by(MembershipPurchase.purchased_at)
-    ).all()
-    workout_sessions = db.session.scalars(
-        select(WorkoutSession)
-        .options(
-            joinedload(WorkoutSession.trainer),
-            selectinload(WorkoutSession.bookings),
-        )
-        .order_by(WorkoutSession.starts_at)
-    ).all()
-
-    writer.writerow(["Fitness Studio Operational Report"])
-    writer.writerow(["Generated", datetime.now().isoformat(timespec="seconds")])
-    writer.writerow([])
-    writer.writerow(["Revenue"])
-    writer.writerow(["Purchase ID", "Member", "Plan", "Amount", "Purchased"])
-    for purchase in purchases:
-        writer.writerow(
-            [
-                purchase.id,
-                purchase.member.full_name,
-                purchase.plan.name,
-                f"{purchase.amount_paid_cents / 100:.2f}",
-                purchase.purchased_at.isoformat(),
-            ]
-        )
-    writer.writerow([])
-    writer.writerow(["Attendance and Capacity"])
-    writer.writerow(
-        ["Session ID", "Title", "Trainer", "Starts", "Status", "Booked", "Capacity"]
-    )
-    for workout_session in workout_sessions:
-        writer.writerow(
-            [
-                workout_session.id,
-                workout_session.title,
-                workout_session.trainer.full_name,
-                workout_session.starts_at.isoformat(),
-                workout_session.status,
-                workout_session.active_booking_count,
-                workout_session.max_capacity,
-            ]
-        )
-
     return Response(
-        output.getvalue(),
+        generate_operational_report(),
         mimetype="text/csv",
         headers={
             "Content-Disposition": "attachment; filename=fitness-studio-report.csv"

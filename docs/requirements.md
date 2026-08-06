@@ -15,10 +15,12 @@
 - Books and cancels only their own bookings under system rules.
 
 ### Trainer
-Trainer is a managed entity, not an authenticated actor in the first release.
+- Authenticates with a trainer account linked one-to-one to a trainer profile.
+- Views only their own dashboard, sessions, and registered participants.
+- Creates and cancels only sessions assigned to their own profile.
 
 ## Functional requirements
-- **FR-01:** The system authenticates manager and member users by username/email and password.
+- **FR-01:** The system authenticates manager, member, and trainer users by email and password.
 - **FR-02:** The system authorizes every protected endpoint according to role.
 - **FR-03:** The manager can manage member records and account status.
 - **FR-04:** The manager can manage trainer records and specialties.
@@ -32,6 +34,14 @@ Trainer is a managed entity, not an authenticated actor in the first release.
 - **FR-12:** A booking consumes one credit atomically.
 - **FR-13:** A valid cancellation restores one credit atomically.
 - **FR-14:** The system provides deterministic demonstration seed data.
+- **FR-15:** Trainers can manage their own workout slots and view participants
+  without accessing another trainer's portal.
+- **FR-16:** Members can use the RAG assistant and its explicitly authorized
+  class-availability runtime skill.
+- **FR-17:** Managers can use AI-assisted recurring scheduling after normal
+  manager authorization and server-side validation.
+- **FR-18:** Membership purchase/renewal records a receipt result and uses Resend
+  when configured.
 
 ## Core business rules
 - Capacity is a positive integer and cannot be lower than active booking count.
@@ -48,12 +58,26 @@ Trainer is a managed entity, not an authenticated actor in the first release.
 ## Non-functional requirements
 - **NFR-01 Maintainability:** Clear MVC boundaries and feature blueprints.
 - **NFR-02 Integrity:** Foreign keys, uniqueness, checks, and atomic transactions.
-- **NFR-03 Security:** Hashed passwords, CSRF, role checks, parameterized SQL, safe cookies.
+- **NFR-03 Security:** Hashed passwords, CSRF, controller role/ownership checks, ORM-safe queries, and safe cookies.
 - **NFR-04 Usability:** Clean responsive Bootstrap 5 UI with clear feedback.
 - **NFR-05 Accessibility:** Labels, focus visibility, keyboard access, semantic headings, and adequate contrast.
-- **NFR-06 Performance:** Paginate manager lists; index foreign keys and common date/status lookups.
+- **NFR-06 Performance:** Use bounded dashboard queries, searchable manager
+  lists, eager loading, and indexes for common foreign-key/date/status lookups.
 - **NFR-07 Testability:** Services accept controllable current time and use isolated test databases.
 - **NFR-08 Recoverability:** Failed transactions roll back without partial balance, booking, or renewal changes.
 
 ## PDF alignment
-The design provides two login-distinguished user types, at least two workflows per user, multiple organization-level business workflows, HTML/CSS presentation, Flask/Jinja server rendering, a 3NF relational database, and MVC separation. Optional bonus integrations are intentionally outside the first release.
+The implemented system exceeds the minimum of two login-distinguished user
+types by providing three authenticated roles. Each role has multiple user
+workflows, and the organization has multiple automated business processes such
+as capacity-safe booking, membership lifecycle handling, schedule cancellation,
+and receipt processing. It uses HTML/CSS, Flask/Jinja server rendering, a 3NF
+relational model, and MVC separation.
+
+The implemented bonus items are Groq-backed RAG/AI assistance, Supabase
+PostgreSQL as the production cloud database, and allow-listed runtime Python
+Skills. Vercel hosts the application and Resend supplies receipt delivery. These
+are project implementation choices that satisfy or support the brief; the brief
+does not mandate the repository's exact filenames. The brief names Ollama for
+the AI bonus, while this implementation deliberately substitutes Groq and must
+describe that provider difference accurately during assessment.

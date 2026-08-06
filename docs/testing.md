@@ -1,11 +1,11 @@
 # Testing Strategy
 
 ## Test layers
-### Unit and model tests
+### Unit and ORM model tests
 - Password hashing and verification
 - Date/status eligibility calculations
 - Input normalization and validation
-- CRUD repository behavior and constraint mapping
+- ORM CRUD behavior, relationships, and constraint mapping
 
 ### Service transaction tests
 - Successful booking decrements one credit.
@@ -20,6 +20,7 @@
 - Anonymous requests redirect to login.
 - Manager pages reject members with 403.
 - Member pages reject managers where member context is required.
+- Trainer pages reject other roles and scope data to the authenticated trainer.
 - A member cannot view or mutate another member's records.
 - State changes require POST and valid CSRF data when enabled.
 - Forms display validation errors and preserve safe input.
@@ -28,6 +29,7 @@
 ### End-to-end smoke tests
 - Manager logs in, creates member/trainer/session, and renews membership.
 - Member logs in, books an eligible session, sees updated balance, and cancels.
+- Trainer logs in, creates/cancels an own slot, and views its participants.
 - Responsive navigation and critical forms work at common viewport sizes.
 
 ## Strict capacity test
@@ -38,7 +40,10 @@ Create a session with one remaining place and two eligible members. Start two se
 - only the successful member loses a credit;
 - the unsuccessful member receives a clear capacity conflict.
 
-SQLite's locking may serialize the requests rather than run statements simultaneously; the test still verifies the transaction re-checks capacity after acquiring write access.
+SQLite's locking may serialize local requests rather than run statements
+simultaneously; the test still verifies the transaction re-checks capacity
+after acquiring write access. Production persistence tests separately verify
+that Vercel requires PostgreSQL and does not silently use ephemeral SQLite.
 
 ## Fixtures
 - Temporary SQLite database per test or test function.
@@ -59,5 +64,5 @@ Before demonstration:
 1. Initialize a clean database.
 2. Run the full automated suite.
 3. Run the seed command.
-4. Complete both role walkthroughs.
+4. Complete all three role walkthroughs.
 5. Verify no plaintext credentials, secret keys, or database files intended to be local are committed.

@@ -27,13 +27,23 @@ The manager dashboard should highlight active members, expiring memberships, upc
 
 The member dashboard should make expiry and remaining credits immediately visible, warn about blocked booking reasons, and list upcoming bookings.
 
+## Trainer navigation
+- My Dashboard
+- Weekly Schedule
+- Own Session Management
+- Participant Lists
+- Logout
+
+The trainer portal scopes every session and participant view to the trainer
+profile linked to the authenticated account.
+
 ## Screen behavior
 - Desktop lists use Bootstrap tables; narrow screens may use responsive table wrappers or cards.
 - Forms retain submitted values after validation failure and show field-level errors.
 - Empty states explain what happened and offer an appropriate next action.
 - Booking buttons display the actionable state: `Book`, `Full`, `Membership expired`, `No credits`, `Already booked`, or `Started`.
 - Dates are displayed in the studio's documented local timezone and unambiguous format.
-- Pagination and filters preserve query parameters.
+- Manager member/trainer search preserves the current query in the filter form.
 
 ## Accessibility
 - Every input has a programmatic label.
@@ -43,24 +53,30 @@ The member dashboard should make expiry and remaining credits immediately visibl
 - Validation summary links to invalid fields where practical.
 - Modals, if used, must support focus management; a normal confirmation page is an acceptable simpler alternative.
 
-## Key templates
+## Current template organization
 ```text
-templates/
+fitness_studio/templates/
   base.html
-  components/
-    flashes.html
-    pagination.html
-    status_badge.html
-  auth/login.html
-  manager/dashboard.html
-  manager/members/{index,form,detail,renew}.html
-  manager/trainers/{index,form,detail}.html
-  manager/sessions/{index,form,detail}.html
-  member/dashboard.html
-  member/sessions/index.html
-  member/bookings/index.html
-  errors/{403,404,409,500}.html
+  auth/
+    login.html
+    register.html
+  manager/
+    dashboard.html
+    member, trainer, session, and subscription views
+  member/
+    dashboard.html
+    schedule.html
+    renewal.html
+    ai_assistant.html
+  trainer/
+    dashboard.html
+    session_form.html
+    participants.html
 ```
+
+The role-specific folders keep each Blueprint's views together while every page
+still inherits the shared `base.html`. The course requires professional
+HTML/CSS presentation and MVC separation, not these exact filenames.
 
 ## Feedback language
 Messages should explain both outcome and next step:

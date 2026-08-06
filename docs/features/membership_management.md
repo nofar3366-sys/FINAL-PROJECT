@@ -1,7 +1,10 @@
 # Feature: Membership Management
 
 ## Purpose
-Allow the manager to maintain member records and renew memberships while preserving a reliable history of expiry and credit changes.
+Allow the manager to maintain member records and renew memberships while
+preserving a reliable history of expiry and credit changes. Members can also
+select demo membership plans; the system records purchases/subscriptions and
+processes a Resend or mock receipt.
 
 ## User stories
 - As a manager, I can create and update a member.
@@ -9,6 +12,8 @@ Allow the manager to maintain member records and renew memberships while preserv
 - As a manager, I can renew a membership and add session credits.
 - As a manager, I can see renewal history and members nearing expiry.
 - As a member, I can see my own status, expiry, and balance.
+- As a member, I can purchase an available demo plan and receive a recorded
+  receipt outcome.
 
 ## Manager workflow
 1. Open a member record.
@@ -23,6 +28,8 @@ Allow the manager to maintain member records and renew memberships while preserv
 - **Service:** atomic renewal and status transition rules.
 - **Controller:** manager list/detail/forms/renewal and member self-view.
 - **View:** member table, form, detail, renewal form/history, member status card.
+- **Integration:** Resend receipt delivery when configured, with a demo-safe
+  mock/log fallback.
 
 ## Suggested manager routes
 - `GET /manager/members`
@@ -50,3 +57,5 @@ Default first-release policy: the manager explicitly selects the new expiry date
 - Invalid renewal creates no history and changes no balance/expiry.
 - Member can view only their own status and balance.
 - Expired, inactive, or zero-credit members receive the correct booking restriction.
+- A plan purchase records purchase/subscription state and does not lose the
+  committed membership update if external receipt delivery fails.

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Dashboard | Fitness Studio{% endblock %}
+{% block content %}
+<div class="dashboard-hero mb-4">
+    <div>
+        <span class="eyebrow">STUDIO OPERATIONS</span>
+        <h1 class="display-6 fw-bold mb-1">Manager dashboard</h1>
+        <p class="mb-0 opacity-75">Members, trainers, attendance, and revenue at a glance.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-warning fw-semibold" href="{{ url_for('manager.reports_csv') }}">Download CSV Report</a>
+    </div>
+</div>
+<div class="row g-3 mb-4">
+    <div class="col-sm-6 col-lg"><div class="card stat-card"><div class="card-body"><span class="text-secondary">Members</span><div class="display-6">{{ counts.members }}</div></div></div></div>
+    <div class="col-sm-6 col-lg"><div class="card stat-card"><div class="card-body"><span class="text-secondary">Trainers</span><div class="display-6">{{ counts.trainers }}</div></div></div></div>
+    <div class="col-sm-6 col-lg"><div class="card stat-card"><div class="card-body"><span class="text-secondary">Sessions</span><div class="display-6">{{ counts.sessions }}</div></div></div></div>
+    <div class="col-sm-6 col-lg"><div class="card stat-card"><div class="card-body"><span class="text-secondary">Active bookings</span><div class="display-6">{{ counts.bookings }}</div></div></div></div>
+    <div class="col-sm-6 col-lg"><div class="card stat-card"><div class="card-body"><span class="text-secondary">Demo revenue</span><div class="h3 mt-2">${{ '%.2f'|format(counts.revenue_cents / 100) }}</div></div></div></div>
+</div>
+<div class="row g-4">
+    <div class="col-lg-6"><div class="card border-0 shadow-sm h-100"><div class="card-body">
+        <div class="d-flex justify-content-between mb-3"><h2 class="h5">Recent members</h2><a href="{{ url_for('manager.members') }}">Manage</a></div>
+        {% for item in members %}
+            <a class="list-group-item list-group-item-action px-0" href="{{ url_for('manager.member_detail', member_id=item.id) }}">{{ item.full_name }} <span class="text-secondary float-end">{{ item.credit_balance }} credits</span></a>
+        {% else %}<p class="text-secondary">No members yet.</p>{% endfor %}
+    </div></div></div>
+    <div class="col-lg-6"><div class="card border-0 shadow-sm h-100"><div class="card-body">
+        <div class="d-flex justify-content-between mb-3"><h2 class="h5">Recent trainers</h2><a href="{{ url_for('manager.trainers') }}">Manage</a></div>
+        {% for item in trainers %}
+            <a class="list-group-item list-group-item-action px-0" href="{{ url_for('manager.trainer_detail', trainer_id=item.id) }}">{{ item.full_name }} <span class="text-secondary float-end">{{ item.specialty }}</span></a>
+        {% else %}<p class="text-secondary">No trainers yet.</p>{% endfor %}
+    </div></div></div>
+</div>
+{% endblock %}

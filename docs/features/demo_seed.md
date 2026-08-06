@@ -1,17 +1,21 @@
 # Feature: Database Initialization and Demo Seed
 
 ## Purpose
-Provide a fast, deterministic way to create a fresh SQLite schema and populate realistic demonstration data for assessment.
+Provide a fast, deterministic way to create the configured relational schema
+and populate realistic demonstration data for assessment. Local setup normally
+uses SQLite; production schema provisioning targets Supabase PostgreSQL before
+Vercel deployment.
 
 ## Commands
-- `flask --app main init-db` creates the schema on a fresh configured database.
-- `flask --app main seed-demo` inserts demonstration records.
+- `flask --app app init-db` creates the schema on a fresh configured database.
+- `flask --app app seed-demo` inserts demonstration records.
 
 The seed command should refuse to run when business data already exists unless an explicit development-only reset workflow is invoked.
 
 ## Seed contents
 - One active manager account
-- At least three trainers with distinct specialties
+- At least three trainers with distinct specialties and linked demo logins where
+  the presentation requires trainer authentication
 - At least four members:
   - active with credits;
   - active with zero credits;
@@ -31,7 +35,8 @@ Use dates relative to the seed execution date so upcoming sessions remain demons
 Development credentials may be printed after seeding and documented in setup instructions. Passwords still pass through the same hashing code used by normal account creation and are never stored in plaintext.
 
 ## MVC and ownership
-- Schema and seed SQL/data builders belong to the persistence setup layer.
+- Schema and seed data builders belong to the persistence setup layer and use
+  Flask-SQLAlchemy models/services.
 - CLI registration belongs to application initialization.
 - Seeding must reuse model/service validation where practical, without issuing HTTP requests.
 

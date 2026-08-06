@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Register | Fitness Studio{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-7 col-lg-5">
+        <div class="card shadow-sm border-0">
+            <div class="card-body p-4">
+                <h1 class="h3 mb-3">Member registration</h1>
+                <p class="text-secondary">New accounts begin with zero credits. A manager can renew your membership.</p>
+                <form method="post">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="row">
+                        <div class="col-sm-6 mb-3">
+                            <label class="form-label" for="first_name">First name</label>
+                            <input class="form-control" id="first_name" name="first_name" value="{{ request.form.get('first_name', '') }}" required>
+                        </div>
+                        <div class="col-sm-6 mb-3">
+                            <label class="form-label" for="last_name">Last name</label>
+                            <input class="form-control" id="last_name" name="last_name" value="{{ request.form.get('last_name', '') }}" required>
+                        </div>
+                    </div>
+                    <div class="mb-3"><label class="form-label" for="email">Email</label><input class="form-control" id="email" name="email" type="email" value="{{ request.form.get('email', '') }}" required></div>
+                    <div class="mb-3"><label class="form-label" for="phone">Phone</label><input class="form-control" id="phone" name="phone" value="{{ request.form.get('phone', '') }}"></div>
+                    <div class="row">
+                        <div class="col-sm-6 mb-3"><label class="form-label" for="password">Password</label><input class="form-control" id="password" name="password" type="password" minlength="6" required></div>
+                        <div class="col-sm-6 mb-3"><label class="form-label" for="confirm_password">Confirm password</label><input class="form-control" id="confirm_password" name="confirm_password" type="password" required></div>
+                    </div>
+                    <button class="btn btn-primary w-100" type="submit">Create account</button>
+                </form>
+                <p class="text-center mt-3 mb-0">Already registered? <a href="{{ url_for('auth.login') }}">Login</a></p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Subscriptions | Fitness Studio{% endblock %}
+{% block content %}
+<div class="mb-4"><h1 class="h2 mb-1">Subscription management</h1><p class="text-secondary">Review, suspend, cancel, or resume member access.</p></div>
+<div class="card border-0 shadow-sm"><div class="table-responsive"><table class="table table-hover align-middle mb-0">
+    <thead><tr><th>Member</th><th>Plan</th><th>Status</th><th>Expiry</th><th>Credits</th><th>Actions</th></tr></thead>
+    <tbody>{% for member in members %}{% set subscription_status = member.subscription.status if member.subscription else member.status %}<tr>
+        <td>{{ member.full_name }}<br><small class="text-secondary">{{ member.user.email }}</small></td>
+        <td>{{ member.subscription.plan.name if member.subscription else 'Legacy / no purchase' }}</td>
+        <td><span class="badge text-bg-{{ 'success' if subscription_status == 'active' else 'warning' }}">{{ subscription_status|title }}</span></td>
+        <td>{{ member.membership_expires_on }}</td><td>{{ member.credit_balance }}</td>
+        <td><div class="d-flex flex-wrap gap-1">
+            {% if subscription_status != 'active' %}<form method="post" action="{{ url_for('manager.update_subscription', member_id=member.id, status='active') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-success">Resume</button></form>{% endif %}
+            {% if subscription_status != 'suspended' %}<form method="post" action="{{ url_for('manager.update_subscription', member_id=member.id, status='suspended') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-warning">Suspend</button></form>{% endif %}
+            {% if subscription_status != 'cancelled' %}<form method="post" action="{{ url_for('manager.update_subscription', member_id=member.id, status='cancelled') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-danger">Cancel</button></form>{% endif %}
+        </div></td>
+    </tr>{% else %}<tr><td colspan="6" class="text-center text-secondary py-4">No members.</td></tr>{% endfor %}</tbody>
+</table></div></div>
+{% endblock %}
